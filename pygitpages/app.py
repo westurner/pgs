@@ -5,11 +5,23 @@ from __future__ import print_function
 pygitpages.app
 ===============
 
+
 Objectives:
 
-* Learn Bottle
-* Serve Static Files (such as ``index.html``)
-* Append .html (``file_path = URL + '.html'``)
+* [x] Learn Bottle
+* [x] Serve Static Files (such as ``index.html``)
+* [x] Append .html (``file_path = URL + '.html'`` ("``try_files``")
+* [x] Serve files from a git branch (or tag/revision)
+  (without first checking out to a working directory)
+* [x] Serve Last-Modified headers (from git modification times)
+* [o] Write toward PyFilesystem interface
+* [x] Find commands for listing and reading files in a Git repo
+  (e.g. for https://github.com/westurner/pyrpo)
+
+Roadmap:
+
+* [ ] PERF: dulwich, pygit2 (these require dependencies)
+* [ ] TST: sensible test cases
 
 """
 import cgi
@@ -302,18 +314,6 @@ def serve_static_files(filepath):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
         return git_static_file(filepath)
-        import mimetypes
-        body = FS.get_contents(filepath)  # XXX
-        mime_guess, encoding = mimetypes.guess_type(filepath)
-        if mime_guess.startswith('text'):
-            mime_guess = "%s ; charset: UTF-8" % mime_guess
-        headers = dict()
-        if encoding:
-            headers['Content-Encoding'] = encoding
-        headers['Content-Length'] = len(body)
-        headers['Content-Type'] = mime_guess
-
-        return bottle.HTTPResponse(body, **headers)
 
 
 def git_static_file(filename,
@@ -434,7 +434,8 @@ def main():
 
     prs = optparse.OptionParser(
         usage="%prog [-p <root_filepath>]",
-        description="Serve a directory or a git revision over HTTP with bottle")
+        description="Serve a directory or a git revision over HTTP "
+                    "with Bottle, WSGI, MIME types, and Last-Modified headers")
 
     prs.add_option('-p', '--path', '--root_filepath',
                    dest='root_filepath',
