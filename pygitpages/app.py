@@ -15,9 +15,16 @@ Objectives:
 import bottle
 # from bottle import Bottle, route, run, request, static_file
 
+import codecs
 import cgi
 import os.path
+import subprocess
 import urlparse
+
+try:
+    import dulwich
+except ImportError:
+    dulwich = None
 
 def build_bottle_app():
     app = bottle.Bottle()
@@ -28,6 +35,90 @@ def build_bottle_app():
 
 app = build_bottle_app()
 
+class DirectoryRepositoryFS(object):
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def exists(self, path):
+        return os.path.exists(path)
+
+    def isdir(self, path):
+        return os.path.isdir(path)
+
+    def isfile(self, path):
+        return os.path.isfile(path)
+
+    def listdir(self, path):
+        return os.listdir(path)
+
+    def read_contents(self, path, *args, **kwargs):
+        with codecs.open(path, *args, **kwargs) as f:
+            return f.read()  # XXX
+
+
+class SubprocessGitRepositoryFS(object):
+
+    def __init__(self, repo_path, rev=None):
+        self.repo_path = repo_path
+        self.rev = rev or 'HEAD'
+
+    @property
+    def git_cmd(self):
+        return ['git', '-R', self.repo_path]
+
+    def to_git_pathspec(self, path):
+        return "%s:%s" % (self.rev, path)
+
+    def exists(self, path):
+        cmd = self.git_cmd() + ['cat-file', '-e', self.to_git_pathspec(path)]
+        retcode = subprocess.call(cmd)
+        return retcode == 0
+
+    def get_object_type(self, path):
+        cmd = self.git_cmd() + ['cat-file', '-t', self.to_git_pathspec(path)]
+        return subprocess.check_output(cmd).strip()
+
+    def isdir(self, path):
+        return self.get_object_type(path) == 'tree'
+
+    def isfile(self, path):
+        return self.get_object_type(path) == 'blob'
+
+    def listdir(self, path):
+        cmd = self.git_cmd() + ['cat-file', '-p', self.to_git_pathspec(path)]
+        output = subprocess.checkoutput(cmd)
+        files = []
+        for _line in output.splitlines():
+            line = _line.strip()
+            if line:
+                perms, type_, hash, name = line.split(None, 3)
+                #yield (name)
+                files.append(name)
+        return files
+
+    def read_contents(self, path):
+        cmd = self.git_cmd() + ['show', self.to_git_pathspec(path)]
+        return subprocess.check_output(cmd)
+
+
+
+class DulwichGitRepositoryFS(object):
+
+    def __init__(self, repo_path):
+        self.repo_path = repo_path
+        self.repo = dulwich.repo.Repo(self.repo_path)
+
+    def exists(self, path):
+        "TODO"
+
+    def isdir(self, path):
+        "TODO"
+
+    def isfile(self, path):
+        "TODO"
+
+
 
 def sanitize_path(path):
     # XXX TODO FIXME
@@ -35,11 +126,10 @@ def sanitize_path(path):
         raise Exception()
     return path
 
+FS = DirectoryRepositoryFS()
+#FS = SubprocessGitRepositoryFS(repo_path, rev)
 
-def rewrite_path(_path, root_filepath,
-                 exists=os.path.exists,
-                 is_dir=os.path.isdir,
-                 is_file=os.path.isfile):
+def rewrite_path(_path, root_filepath):
     """
 
     Args:
@@ -49,10 +139,10 @@ def rewrite_path(_path, root_filepath,
     """
     path = sanitize_path(_path)
     full_path = os.path.join(root_filepath, path)
-    if exists(full_path):
-        if is_dir(full_path):
+    if FS.exists(full_path):
+        if FS.isdir(full_path):
             dir_index_html_path = os.path.join(full_path, 'index.html')
-            if exists(dir_index_html_path) and is_file(dir_index_html_path):
+            if FS.exists(dir_index_html_path) and FS.isfile(dir_index_html_path):
                 return urlparse.urljoin(path, 'index.html')
         return path
     else:
@@ -60,7 +150,7 @@ def rewrite_path(_path, root_filepath,
         if not (path.endswith('/') or path.endswith('.html')):
             path_dot_html = path + ".html"
             disk_path = os.path.join(root_filepath, path_dot_html)
-            if exists(disk_path) and is_file(disk_path):
+            if FS.exists(disk_path) and FS.isfile(disk_path):
                 return path_dot_html
         return path
 
@@ -70,9 +160,7 @@ def serve_index_html():
     return bottle.static_file('index.html', root=app.config['root_filepath'])
 
 
-def generate_listdir_html_table(filepath, root_filepath,
-                                list_dir=os.listdir,
-                                is_dir=os.path.isdir):
+def generate_listdir_html_table(filepath, root_filepath):
     """
     Generate directory listing HTML
 
@@ -82,7 +170,7 @@ def generate_listdir_html_table(filepath, root_filepath,
 
     Keyword Arguments:
         list_dir (callable: list[str]): list file names in a directory
-        is_dir (callable: bool): os.path.isdir
+        isdir (callable: bool): os.path.isdir
 
     Yields:
         str: lines of an HTML table
@@ -94,10 +182,10 @@ def generate_listdir_html_table(filepath, root_filepath,
     print("ROOT_FILEPATH: %r" % root_filepath)
     print("FILEPATH: %r" % filepath)
     print("dir_path: %r" % dir_path)
-    for name in list_dir(dir_path):
+    for name in FS.listdir(dir_path):
         full_path = os.path.join(dir_path, name)
         absolute_url = u'/'.join(('', filepath, name))
-        if is_dir(full_path):
+        if FS.isdir(full_path):
             absolute_url = absolute_url + '/'
         yield u'<tr><td><a href="{0}">{0}</a></td></tr>'.format(
             cgi.escape(absolute_url))  # TODO XXX
@@ -105,19 +193,16 @@ def generate_listdir_html_table(filepath, root_filepath,
 
 
 @app.route('/<filepath:path>')
-def serve_static_files(filepath,
-                       exists=os.path.exists,
-                       is_dir=os.path.isdir,
-                       is_file=os.path.isfile):
+def serve_static_files(filepath):
     root_filepath = app.config['root_filepath']
     if filepath == '':
         filepath = 'index.html'
     else:
         filepath = rewrite_path(filepath, root_filepath)  # or ''  # XXX
     full_path = os.path.join(root_filepath, filepath)
-    if exists(full_path) and is_dir(full_path):
+    if FS.exists(full_path) and FS.isdir(full_path):
         index_html = os.path.join(full_path, 'index.html')
-        if exists(index_html) and is_file(index_html):
+        if FS.exists(index_html) and FS.isfile(index_html):
             filepath = index_html
         if app.config.get('show_directory_listings'):
             return list(generate_listdir_html_table(filepath, root_filepath))
