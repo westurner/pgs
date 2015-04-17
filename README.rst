@@ -11,9 +11,8 @@ pgs
 A bottle webapp for serving static files from a git branch,
 or from the local filesystem.
 
-| Source: https://github.com/westurner/pgs
-
 * Free software: MIT license
+* Source: https://github.com/westurner/pgs
 
 
 Features
@@ -68,3 +67,11 @@ Further Usage:
       -v, --verbose         
       -q, --quiet           
       -t, --test
+
+
+Caveat Emptor
+---------------
+* Upstream caching would be necessary for all but the most local use
+  cases
+* True git bindings would likely do less buffering of
+  ``subprocess.check_output``
