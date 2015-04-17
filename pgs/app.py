@@ -435,7 +435,7 @@ def main():
     import sys
 
     prs = optparse.OptionParser(
-        usage="%prog [-p <root_filepath>]",
+        usage="%prog [-p <path>] [-g <repopath>] [-r <rev/tag/branch>]",
         description="Serve a directory or a git revision over HTTP "
                     "with Bottle, WSGI, MIME types, and Last-Modified headers")
 
