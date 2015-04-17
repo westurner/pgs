@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 """
-pygitpages.app
+pgs.app
 ===============
 
+A bottle webapp for serving static files from a git branch,
+or from the local filesystem.
 
 Objectives:
 
