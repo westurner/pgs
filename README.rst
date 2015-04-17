@@ -2,14 +2,11 @@
 pgs
 ===============================
 
-.. image:: https://img.shields.io/travis/westurner/pgs.svg
-        :target: https://travis-ci.org/westurner/pgs
+.. .. image:: https://img.shields.io/travis/westurner/pgs.svg
+..         :target: https://travis-ci.org/westurner/pgs
 
-.. image:: https://img.shields.io/pypi/v/pgs.svg
-        :target: https://pypi.python.org/pypi/pgs
-
-
-pgs
+.. .. image:: https://img.shields.io/pypi/v/pgs.svg
+..        :target: https://pypi.python.org/pypi/pgs
 
 A bottle webapp for serving static files from a git branch,
 or from the local filesystem.
@@ -17,15 +14,15 @@ or from the local filesystem.
 | Source: https://github.com/westurner/pgs
 
 * Free software: MIT license
-... * Documentation: https://pgs.readthedocs.org.
 
 
 Features
 --------
 
-* Serve static files from a git branch,
+* [x] Serve static files from a filesystem directory
+* [x] Serve static files from a git branch,
   with Last-Modified headers according to git timestamps
-* Guess MIME-types from paths
+* [x] Guess MIME-types from paths
 * [x] subprocess bindings to ``git cat-file`` and ``git show``
 * [ ] dulwich
 * [ ] pygit2
