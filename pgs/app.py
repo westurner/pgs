@@ -404,7 +404,7 @@ def git_static_file(filename,
     return HTTPResponse(body, **headers)
 
 
-def pygitpages(app, config_obj):
+def pgs(app, config_obj):
     app.config['root_filepath'] = os.path.abspath(
         os.path.expanduser(config_obj.root_filepath))
 
@@ -422,9 +422,9 @@ def pygitpages(app, config_obj):
 import unittest
 
 
-class Test_pygitpages(unittest.TestCase):
+class Test_pgs(unittest.TestCase):
 
-    def test_pygitpages(self):
+    def test_pgs(self):
         app = make_app()
         self.assertTrue(app)
 
@@ -491,7 +491,7 @@ def main():
         import unittest
         exit(unittest.main())
 
-    output = pygitpages(app, opts)
+    output = pgs(app, opts)
     output
     sys.exit(0)
 
