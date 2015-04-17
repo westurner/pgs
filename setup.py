@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import codecs
 
 try:
     from setuptools import setup
@@ -8,10 +9,10 @@ except ImportError:
     from distutils.core import setup
 
 
-with open('README.rst') as readme_file:
+with codecs.open('README.rst', encoding='UTF8') as readme_file:
     readme = readme_file.read()
 
-with open('HISTORY.rst') as history_file:
+with codecs.open('HISTORY.rst', encoding='UTF8') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
@@ -24,7 +25,7 @@ test_requirements = [
 
 setup(
     name='pgs',
-    version='0.1.1',
+    version='0.1.2',
     description="pgs",
     long_description=readme + '\n\n' + history,
     author="Wes Turner",
