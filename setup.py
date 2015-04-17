@@ -25,7 +25,7 @@ test_requirements = [
 
 setup(
     name='pgs',
-    version='0.1.1',
+    version='0.1.2',
     description="pgs",
     long_description=readme + '\n\n' + history,
     author="Wes Turner",
