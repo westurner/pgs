@@ -30,11 +30,11 @@ import cgi
 import collections
 import codecs
 import distutils.spawn
+import logging
 import mimetypes
 import os.path
 import subprocess
 import time
-import urlparse
 
 
 import bottle
@@ -45,38 +45,105 @@ try:
 except ImportError:
     dulwich = None
 
+DEBUG = False
+DEFAULT_ENCODING = 'UTF8'
+
+log = logging.getLogger('pgs.app')
+if DEBUG:
+    log.setLevel(logging.DEBUG)
+    subp_stderr = subprocess.STDOUT
+else:
+    log.setLevel(logging.INFO)
+    subp_stderr = None  # subprocess.PIPE
+
+
+def pathjoin(*args, **kwargs):
+    """
+    Arguments:
+        args (list): *args list of paths
+            if len(args) == 1, args[0] is not a string, and args[0] is iterable,
+            set args to args[0].
+
+    Basically::
+
+        joined_path = u'/'.join(
+            [args[0].rstrip('/')] +
+            [a.strip('/') for a in args[1:-1]] +
+            [args[-1].lstrip('/')])
+    """
+    log.debug('pathjoin: %r' % list(args))
+
+    def _pathjoin(*args, **kwargs):
+        len_ = len(args) - 1
+        if len_ < 0:
+            raise Exception('no args specified')
+        elif len_ == 0:
+            if not isinstance(args, basestring):
+                if hasattr(args, '__iter__'):
+                    _args = args
+                    _args
+                    args = args[0]
+        for i, arg in enumerate(args):
+            if not i:
+                yield arg.rstrip('/')
+            elif i == len_:
+                yield arg.lstrip('/')
+            else:
+                yield arg.strip('/')
+    joined_path = u'/'.join(_pathjoin(*args))
+    return sanitize_path(joined_path)
+
 
 class DirectoryRepositoryFS(object):
 
-    def __init__(self, *args, **kwargs):
-        self.root_filepath = kwargs['root_filepath']
+    def __init__(self, conf):
+        self.conf = conf
+        if 'pgs.root_path' not in self.conf:
+            raise Exception('must specify root_path')
+
+    @property
+    def root_path(self):
+        return self.conf['pgs.root_path']
+
+    def prefix_path(self, path):
+        path = pathjoin(self.root_path, path)
+        return path
 
     def exists(self, path):
-        return os.path.exists(path)
+        return os.path.exists(self.prefix_path(path))
 
     def isdir(self, path):
-        return os.path.isdir(path)
+        return os.path.isdir(self.prefix_path(path))
 
     def isfile(self, path):
-        return os.path.isfile(path)
+        return os.path.isfile(self.prefix_path(path))
+
+    def getinfo(self, path):
+        attrs = collections.OrderedDict()
+        stats = os.stat(self.prefix_path(path))
+        attrs["size"] = stats.st_size
+        attrs["created_time"] = stats.st_ctime
+        attrs["accessed_time"] = stats.st_atime
+        attrs["modified_time"] = stats.st_mtime
+        return attrs
 
     def listdir(self, path, **kwargs):
         if kwargs:
             raise NotImplementedError()  # ~-> PyFilesystem interface
-        return os.listdir(path)
+        return os.listdir(self.prefix_path(path))
 
     def listdirinfo(self, path, **kwargs):
         if kwargs:
             raise NotImplementedError()  # ~-> PyFilesystem interface
-        return [self.getinfo(p) for p in self.listdir(path, **kwargs)]
+        for p in self.listdir(self.prefix_path(path), **kwargs):
+            yield self.getinfo(p)
 
-    def get_contents(self, path, *args, **kwargs):
-        kwargs.setdefault('encoding', 'UTF-8')
-        with codecs.open(path, *args, **kwargs) as f:
-            return f  # .read()  # XXX
+    def get_fileobj(self, path, *args, **kwargs):
+        kwargs.setdefault('encoding', DEFAULT_ENCODING)
+        return codecs.open(self.prefix_path(path), *args, **kwargs)
 
     def getsyspath(self, path, allow_none=False):
-        return os.path.join(self.root_filepath, path)
+        return self.prefix_path(path)
 
     def hassyspath(self, path):
         return bool(self.getsyspath(path))
@@ -84,11 +151,18 @@ class DirectoryRepositoryFS(object):
 
 class SubprocessGitRepositoryFS(object):
 
-    GIT_BIN = distutils.spawn.find_executable('git')
+    GIT_BIN = os.environ.get('GIT_BIN', distutils.spawn.find_executable('git'))
 
-    def __init__(self, path, rev=None):
-        self.repo_path = path
-        self.repo_rev = rev or 'HEAD'
+    def __init__(self, conf):
+        self.conf = conf
+
+    @property
+    def repo_path(self):
+        return self.conf['pgs.git_repo_path']
+
+    @property
+    def repo_rev(self):
+        return self.conf['pgs.git_repo_rev']
 
     def git_cmd(self):
         return [self.GIT_BIN, '-C', self.repo_path]
@@ -96,16 +170,23 @@ class SubprocessGitRepositoryFS(object):
     def to_git_pathspec(self, path):
         return "%s:%s" % (self.repo_rev, path)
 
+    def prefix_path(self, path):
+        path = path.lstrip('/')
+        return path
+
     def exists(self, path):
+        path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-e', self.to_git_pathspec(path)]
-        retcode = subprocess.call(cmd, stderr=subprocess.STDOUT)
+        retcode = subprocess.call(cmd, stderr=subp_stderr)
         return retcode == 0
 
     def getsize(self, path):
+        path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-s', self.to_git_pathspec(path)]
         return long(subprocess.check_output(cmd))
 
     def get_author_committer_dates(self, path):
+        path = self.prefix_path(path)
         cmd = self.git_cmd() + ['log', '-1', "--format=%at %ct",
                                 self.repo_rev,
                                 '--', path]
@@ -114,6 +195,7 @@ class SubprocessGitRepositoryFS(object):
         return int(author_date), int(committer_date)
 
     def getinfo(self, path):
+        path = self.prefix_path(path)
         attrs = collections.OrderedDict()
         attrs["size"] = self.getsize(path)
         _, committer_date = self.get_author_committer_dates(path)
@@ -123,6 +205,7 @@ class SubprocessGitRepositoryFS(object):
         return attrs
 
     def get_object_type(self, path):
+        path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-t', self.to_git_pathspec(path)]
         return subprocess.check_output(cmd).strip()
 
@@ -133,6 +216,7 @@ class SubprocessGitRepositoryFS(object):
         return self.get_object_type(path) == 'blob'
 
     def listdir(self, path, **kwargs):
+        path = self.prefix_path(path)
         if kwargs:
             raise NotImplementedError()  # ~-> PyFilesystem interface
         cmd = self.git_cmd() + ['cat-file', '-p', self.to_git_pathspec(path)]
@@ -149,9 +233,19 @@ class SubprocessGitRepositoryFS(object):
     def listdirinfo(self, path, **kwargs):
         if kwargs:
             raise NotImplementedError()  # ~-> PyFilesystem interface
-        return [self.getinfo(p) for p in self.listdir(path, **kwargs)]
+        # TODO: PERF: dirlist and stat the rest
+        for p in self.listdir(path, **kwargs):
+            yield self.getinfo(pathjoin(path, p))
+
+    def get_fileobj(self, path):
+        path = self.prefix_path(path)
+        cmd = self.git_cmd() + ['show', self.to_git_pathspec(path)]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        # p.communicate()
+        return p.stdout
 
     def get_contents(self, path):
+        path = self.prefix_path(path)
         cmd = self.git_cmd() + ['show', self.to_git_pathspec(path)]
         return subprocess.check_output(cmd)
 
@@ -175,33 +269,86 @@ class DulwichGitRepositoryFS(object):
         "TODO"
 
 
+ADDL_MIMETYPES = [
+    ('text/x-makefile', 'Makefile'),
+    ('text/x-rst', '.rst'),
+    # ('application/json', '.json'),
+    ('text/json', '.json'),
+    ('text/json', '.jsonld'),
+    ('text/csv', '.csv'),
+    ('text/turtle', '.ttl'),
+    ('application/n-triples', '.nt'),
+    ('application/rdf+xml', '.rdf'),
+    ('text/n3', '.n3'),
+    ('application/trig', '.trig'),
+]
+
+CONFIGURED_MIMETYPES = False
+
+
+def configure_mimetypes():
+    global CONFIGURED_MIMETYPES
+    if not CONFIGURED_MIMETYPES:
+        for (type_, ext) in ADDL_MIMETYPES:
+            mimetypes.add_type(type_, ext)
+    CONFIGURED_MIMETYPES = True
+    log.debug('configure_mimetypes()')
+
+
 # bottle app
+GIT_REPO_REV_DEFAULT = 'gh-pages'
 
-def make_app():
-    app = bottle.Bottle()
-    app.config['root_filepath'] = os.path.abspath('.')
-    app.config['show_directory_listings'] = True
 
-    app.config['FS'] = DirectoryRepositoryFS(
-        root_filepath=app.config['root_filepath'])
+confs = collections.OrderedDict()
+confs['fs-here'] = {
+    'pgs.root_path': '.'}
+confs['git-here__default'] = {
+    'pgs.git_repo_path': '.',
+    'pgs.git_repo_rev': GIT_REPO_REV_DEFAULT}
+confs['git-here__gh-pages'] = {
+    'pgs.git_repo_path': '.',
+    'pgs.git_repo_rev': 'gh-pages'}
+confs['git-here__master'] = {
+    'pgs.git_repo_path': '.',
+    'pgs.git_repo_rev': 'master'}
 
+
+def configure_app(app, conf=None):
+    if conf is None:
+        conf = {}
+    conf['pgs.show_dirlists'] = True
+    app.config.update(conf)
+    app = configure_FS(app, conf=app.config)
+    configure_mimetypes()
     return app
 
 
-app = make_app()
+def configure_FS(app, conf=None):
+    FS = None
+    # if git configuration is found, use git
+    if conf.get('pgs.git_repo_path'):
+        FS = SubprocessGitRepositoryFS(app.config)
+    # otherwise, serve from the filesystem at pgs.root_path
+    elif conf.get('pgs.root_path'):
+        FS = DirectoryRepositoryFS(app.config)
+    app.config['pgs.FS'] = FS
+    return app
 
 
-@app.hook('config')
-def on_config_change(key, value):
-    if key == 'root_filepath':
-        if value:
-            app.config['FS'] = DirectoryRepositoryFS(
-                root_filepath=app.config['root_filepath'])
-    elif key in ('git_repo_path', 'git_repo_rev'):
-        if value:
-            app.config['FS'] = SubprocessGitRepositoryFS(
-                app.config['git_repo_path'],
-                app.config.get('git_repo_rev', 'gh-pages'))
+def make_app(conf=None):
+    app = bottle.Bottle()
+    return configure_app(app, conf)
+
+
+# @app.hook('config')
+# def on_config_change(key, value):
+#    log.debug("config_change: %r = %r" % (key, value))
+#    if key == 'root_path':
+#        if value:
+#            app.config['pgs.FS'] = DirectoryRepositoryFS(app.config)
+#    elif key in ('git_repo_path', 'git_repo_rev'):
+#        if value:
+#            app.config['pgs.FS'] = SubprocessGitRepositoryFS(app.config)
 
 
 def sanitize_path(path):
@@ -211,50 +358,38 @@ def sanitize_path(path):
     return path
 
 
-def rewrite_path(_path, root_filepath):
+def rewrite_path(FS, _path):
     """
 
     Args:
         _path (str): path to rewrite (in search of index.html)
-        root_filepath (str): filesystem root_filepath
+        root_path (str): filesystem root_path
 
     """
-    FS = app.config['FS']
     path = sanitize_path(_path)
-    full_path = FS.getsyspath(path)
-    if FS.exists(full_path):
-        if FS.isdir(full_path):
-            dir_index_html_path = os.path.join(full_path, 'index.html')
-            if FS.exists(dir_index_html_path) and FS.isfile(dir_index_html_path):
-                return urlparse.urljoin(path, 'index.html')
-        return path
+    log.debug('sntpath: %r' % path)
+    if FS.exists(path):
+        if FS.isdir(path):
+            dir_index_html_path = pathjoin(path, 'index.html')
+            if (FS.exists(dir_index_html_path)
+                    and FS.isfile(dir_index_html_path)):
+                path = dir_index_html_path
     else:
         # try appending '.html'
         if not (path.endswith('/') or path.endswith('.html')):
             path_dot_html = path + ".html"
-            disk_path = FS.getsyspath(path_dot_html)
-            if FS.exists(disk_path) and FS.isfile(disk_path):
-                return path_dot_html
-        return path
+            if FS.exists(path_dot_html) and FS.isfile(path_dot_html):
+                path = path_dot_html
+    return path
 
 
-@app.route('/')
-def serve_index_html():
-    FS = request.app.config['FS']
-    if isinstance(FS, DirectoryRepositoryFS):
-        return bottle.static_file('index.html',
-                                  root=app.config['root_filepath'])
-    else:
-        return git_static_file('index.html'), # TODO
-
-
-def generate_listdir_html_table(filepath, root_filepath):
+def generate_dirlist_html(FS, filepath):
     """
     Generate directory listing HTML
 
     Arguments:
-        filepath (str):
-        root_filepath (str):
+        FS (FS): filesystem object to read files from
+        filepath (str): path to generate directory listings for
 
     Keyword Arguments:
         list_dir (callable: list[str]): list file names in a directory
@@ -263,66 +398,69 @@ def generate_listdir_html_table(filepath, root_filepath):
     Yields:
         str: lines of an HTML table
     """
-    FS = app.config['FS']
-    yield '<table>'
+    yield '<table class="dirlist">'
     if filepath == '/':
         filepath = ''
-    if isinstance(FS, DirectoryRepositoryFS):
-        dir_path = os.path.join(root_filepath, filepath)
-    else:
-        dir_path = filepath
-    # print("ROOT_FILEPATH: %r" % root_filepath)
-    # print("FILEPATH: %r" % filepath)
-    # print("dir_path: %r" % dir_path)
-    for name in FS.listdir(dir_path):
-        full_path = os.path.join(dir_path, name)
-        absolute_url = u'/'.join(('', filepath.rstrip('/'), name))
+    for name in FS.listdir(filepath):
+        full_path = pathjoin(filepath, name)
         if FS.isdir(full_path):
-            absolute_url = absolute_url + '/'
+            full_path = full_path + '/'
         yield u'<tr><td><a href="{0}">{0}</a></td></tr>'.format(
-            cgi.escape(absolute_url))  # TODO XXX
+            cgi.escape(full_path))  # TODO XXX
     yield '</table>'
 
 
-@app.route('/<filepath:path>@@')
-def serve_directory_listing(filepath):
-    FS = request.app.config['FS']
-    root_filepath = app.config['root_filepath']
-    full_path = FS.getsyspath(filepath)
-    if FS.exists(full_path) and FS.isdir(full_path):
-        if app.config.get('show_directory_listings'):
-            return list(generate_listdir_html_table(filepath, root_filepath))
+# bottle app
+
+app = make_app(conf=None)
 
 
-@app.route('/<filepath:path>')
+@app.route('<filepath:re:(.*?)@@$>')
+def explicitly_serve_dirlist(filepath):
+    # trip leading / and trailing '@@'
+    path = filepath[1:][:-2]
+    return serve_dirlist(path)
+
+
+def serve_dirlist(path):
+    FS = request.app.config['pgs.FS']
+    if FS.exists(path) and FS.isdir(path):
+        if request.app.config.get('pgs.show_dirlists'):
+            return list(generate_dirlist_html(FS, path))
+    return HTTPError(404, 'Not found.')
+
+
+@app.route('<filepath:path>')
 def serve_static_files(filepath):
-    FS = request.app.config['FS']
-    root_filepath = app.config['root_filepath']
+    FS = request.app.config['pgs.FS']
     if filepath == '':
-        filepath = 'index.html'
-    else:
-        filepath = rewrite_path(filepath, root_filepath)  # or ''  # XXX
-    full_path = FS.getsyspath(filepath)
-    if FS.exists(full_path) and FS.isdir(full_path):
-        index_html = os.path.join(full_path, 'index.html')
+        filepath = '/'  # index.html'
+    log.debug("filepath: %r" % filepath)
+    path = rewrite_path(FS, filepath)  # or ''  # XXX
+    log.debug("rwpath  : %r" % path)
+    if FS.exists(path) and FS.isdir(path):
+        index_html = pathjoin(path, 'index.html')
         if FS.exists(index_html) and FS.isfile(index_html):
-            filepath = index_html
-        if app.config.get('show_directory_listings'):
-            return list(generate_listdir_html_table(filepath, root_filepath))
+            path = index_html
+        else:
+            if request.app.config.get('pgs.show_dirlists'):
+                return list(generate_dirlist_html(FS, path))
+                # TODO: mtime ?
 
     if isinstance(FS, DirectoryRepositoryFS):
-        return bottle.static_file(filepath, root=root_filepath)
-    else:
+        return bottle.static_file(path, root=app.config['pgs.root_path'])
+    elif isinstance(FS, SubprocessGitRepositoryFS):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
-        return git_static_file(filepath)
+        return git_static_file(path)
+    else:
+        raise Exception(FS, type(FS))
 
 
 def git_static_file(filename,
                     mimetype='auto',
                     download=False,
                     charset='UTF-8'):
-
     """ This method is derived from bottle.static_file:
 
         Open [a file] and return :exc:`HTTPResponse` with status
@@ -341,21 +479,21 @@ def git_static_file(filename,
             mime-type. (default: UTF-8)
     """
 
-    #root = os.path.abspath(root) + os.sep
-    #filename = os.path.abspath(os.path.join(root, filename.strip('/\\')))
+    # root = os.path.abspath(root) + os.sep
+    # filename = os.path.abspath(pathjoin(root, filename.strip('/\\')))
     filename = filename.strip('/\\')
     headers = dict()
 
-    FS = request.app.config['FS']
-    #if not filename.startswith(root):
+    FS = request.app.config['pgs.FS']
+    # if not filename.startswith(root):
     #    return HTTPError(403, "Access denied.")
     if not FS.exists(filename):
         return HTTPError(404, "Not found.")
-    #if not os.access(filename, os.R_OK):
-    #    return HTTPError(403, "You do not have permission to access this file.")
+    # if not os.access(filename, os.R_OK):
+    # return HTTPError(403, "You do not have permission to access this file.")
 
     if mimetype == 'auto':
-        if download and download != True:
+        if download and download is not True:
             mimetype, encoding = mimetypes.guess_type(download)
         else:
             mimetype, encoding = mimetypes.guess_type(filename)
@@ -387,7 +525,7 @@ def git_static_file(filename,
                                         time.gmtime())
         return HTTPResponse(status=304, **headers)
 
-    body = '' if request.method == 'HEAD' else FS.get_contents(filename)
+    body = '' if request.method == 'HEAD' else FS.get_fileobj(filename)
 
     clen
     # headers["Accept-Ranges"] = "bytes"
@@ -405,13 +543,16 @@ def git_static_file(filename,
 
 
 def pgs(app, config_obj):
-    app.config['root_filepath'] = os.path.abspath(
-        os.path.expanduser(config_obj.root_filepath))
-
+    if config_obj.root_path:
+        app.config['pgs.root_path'] = os.path.abspath(
+            os.path.expanduser(config_obj.root_path))
     if config_obj.git_repo_path:
-        app.config['FS'] = SubprocessGitRepositoryFS(config_obj.git_repo_path,
-                                                     config_obj.git_repo_rev)
-    print("app.config: %s" % app.config)
+        app.config['pgs.git_repo_path'] = os.path.abspath(
+            os.path.expanduser(config_obj.git_repo_path))
+        app.config['pgs.git_repo_rev'] = config_obj.git_repo_rev
+
+    log.info("app.config: %s" % app.config)
+    app = configure_app(app)
     return bottle.run(app,
                       host=config_obj.host,
                       port=config_obj.port,
@@ -419,17 +560,7 @@ def pgs(app, config_obj):
                       reloader=config_obj.reloader)
 
 
-import unittest
-
-
-class Test_pgs(unittest.TestCase):
-
-    def test_pgs(self):
-        app = make_app()
-        self.assertTrue(app)
-
-
-def main():
+def main(argv=1j):
     import logging
     import optparse
     import sys
@@ -439,9 +570,9 @@ def main():
         description="Serve a directory or a git revision over HTTP "
                     "with Bottle, WSGI, MIME types, and Last-Modified headers")
 
-    prs.add_option('-p', '--path', '--root_filepath',
-                   dest='root_filepath',
-                   default='.')
+    prs.add_option('-p', '--path', '--prefix',
+                   dest='root_path',
+                   help='Filesystem path to serve files from')
 
     prs.add_option('-g', '--git',
                    dest='git_repo_path',
@@ -477,24 +608,41 @@ def main():
     prs.add_option('-t', '--test',
                    dest='run_tests',
                    action='store_true',)
+    _argv = []
+    if argv == 1j:
+        _argv = sys.argv[1:]
+    elif argv is None:
+        _argv = []
+    (opts, args) = prs.parse_args(args=_argv)  # _argv)
 
-    (opts, args) = prs.parse_args()
+    loglevel = logging.INFO
+    if opts.quiet:
+        loglevel = logging.ERROR
+    if opts.verbose:
+        loglevel = logging.DEBUG
+        global DEBUG
+        DEBUG = True
 
-    if not opts.quiet:
-        logging.basicConfig()
+    logging.basicConfig(
+        level=loglevel,
+        format='%(asctime)s %(levelname)-6s %(lineno)-4s %(message)s')
+    log.setLevel(loglevel)
+    for x in ('debug', 'info', 'error'):
+        getattr(log, x)("%s ##test##" % x)
 
-        if opts.verbose:
-            logging.getLogger().setLevel(logging.DEBUG)
+    log.debug("opts: %r" % opts)
+    log.debug("args: %r" % args)
 
     if opts.run_tests:
-        sys.argv = [sys.argv[0]] + args
+        __argv = [sys.argv[0]] + args
         import unittest
-        exit(unittest.main())
+        return unittest.main(argv=__argv)
 
     output = pgs(app, opts)
     output
-    sys.exit(0)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main(argv=1j))
