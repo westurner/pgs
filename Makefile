@@ -43,6 +43,10 @@ test:
 test-all:
 	tox
 
+test-branch:
+	# pip install ghp-import
+	ghp-import -b pgs-test ./tests/www/
+
 coverage:
 	coverage run --source pgs setup.py test
 	coverage report -m
