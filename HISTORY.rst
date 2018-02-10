@@ -2,13 +2,14 @@ History
 ---------
 
 
-develop (2018-02-10 16:40:45 -0500)
+develop (2018-02-10 16:49:59 -0500)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ::
 
    git log --reverse --pretty=format:'* %s [%h]' v0.1.3..develop
 
 * MRG: Merge tag 'v0.1.3' into develop \[587b2ae\]
+* DOC: HISTORY.rst: git-changelog.py --develop \[141d436\]
 
 
 v0.1.3 (2018-02-10 16:39:21 -0500)
