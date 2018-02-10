@@ -25,7 +25,7 @@ test_requirements = [
 
 setup(
     name='pgs',
-    version='0.1.3',
+    version='0.1.4',
     description="A bottle webapp for serving static files from a git branch, or from the local filesystem.",
     long_description=readme + '\n\n' + history,
     author="Wes Turner",
