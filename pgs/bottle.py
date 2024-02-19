@@ -7,7 +7,7 @@ a built-in HTTP Server and adapters for many third party WSGI/HTTP-server and
 template engines - all in a single file and with no dependencies other than the
 Python Standard Library.
 
-Homepage and documentation: http://bottlepy.org/
+Homepage and documentation: https://bottlepy.org/
 
 Copyright (c) 2009-2025, Marcel Hellkamp.
 License: MIT (see LICENSE for details)
@@ -328,7 +328,7 @@ class Router:
 
     def add(self, rule, method, target, name=None):
         """ Add a new rule or replace the target for an existing rule. """
-        anons = 0  # Number of anonymous wildcards found
+        anons = []  # Generated names of anonymous wildcards
         keys = []  # Names of keys
         pattern = ''  # Regular expression pattern with named groups
         filters = []  # Lists of wildcard input filters
@@ -341,12 +341,10 @@ class Router:
                 if mode == 'default': mode = self.default_filter
                 mask, in_filter, out_filter = self.filters[mode](conf)
                 if not key:
-                    pattern += '(?:%s)' % mask
-                    key = 'anon%d' % anons
-                    anons += 1
-                else:
-                    pattern += '(?P<%s>%s)' % (key, mask)
-                    keys.append(key)
+                    key = 'anon%d' % len(anons)
+                    anons.append(key)
+                pattern += '(?P<%s>%s)' % (key, mask)
+                keys.append(key)
                 if in_filter: filters.append((key, in_filter))
                 builder.append((key, out_filter or str))
             elif key:
@@ -376,11 +374,16 @@ class Router:
                         url_args[name] = wildcard_filter(url_args[name])
                     except ValueError:
                         raise HTTPError(400, 'Path has wrong format.')
+                for key in anons:
+                    del url_args[key]
                 return url_args
         elif re_pattern.groupindex:
 
             def getargs(path):
-                return re_match(path).groupdict()
+                url_args = re_match(path).groupdict()
+                for key in anons:
+                    del url_args[key]
+                return url_args
         else:
             getargs = None
 
@@ -2780,7 +2783,7 @@ def static_file(filename, root,
 
     if not filename.startswith(root):
         return HTTPError(403, "Access denied.")
-    if not os.path.exists(filename) or not os.path.isfile(filename):
+    if not os.path.isfile(filename):
         return HTTPError(404, "File does not exist.")
     if not os.access(filename, os.R_OK):
         return HTTPError(403, "You do not have permission to access this file.")
@@ -3615,7 +3618,7 @@ class GeventServer(ServerAdapter):
 
 
 class GunicornServer(ServerAdapter):
-    """ Untested. See http://gunicorn.org/configure.html for options. """
+    """ Untested. See https://gunicorn.org/configure.html for options. """
 
     def run(self, handler):
         from gunicorn.app.base import BaseApplication
