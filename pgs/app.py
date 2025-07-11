@@ -26,20 +26,45 @@ Roadmap:
 * [ ] TST: sensible test cases
 
 """
-import cgi
-import collections
+
 import codecs
-import distutils.spawn
+import collections
 import logging
 import mimetypes
 import os.path
 import subprocess
 import time
 
+# import tracemalloc
+# tracemalloc.start()
 
-import bottle
-# from bottle import Bottle, route, run, request, static_file
-from bottle import parse_date, request, HTTPResponse, HTTPError
+import sys
+IS_PYTHON2 = sys.version_info.major == 2
+
+if IS_PYTHON2:
+    import cgi
+    import distutils.spawn
+    html_escape = cgi.escape
+    which = distutils.spawn.find_executable
+
+else:
+    import html
+    import shutil
+    html_escape = html.escape
+    which = shutil.which
+
+    basestring = str
+    long = int
+
+try:
+    import bottle
+    from .bottle import parse_date, request, HTTPResponse, HTTPError
+except ImportError:
+    # import bottle
+    from . import bottle
+    # from bottle import Bottle, route, run, request, static_file
+    from .bottle import parse_date, request, HTTPResponse, HTTPError
+
 try:
     import dulwich
 except ImportError:
@@ -151,7 +176,7 @@ class DirectoryRepositoryFS(object):
 
 class SubprocessGitRepositoryFS(object):
 
-    GIT_BIN = os.environ.get('GIT_BIN', distutils.spawn.find_executable('git'))
+    GIT_BIN = os.environ.get('GIT_BIN', which('git'))
 
     def __init__(self, conf):
         self.conf = conf
@@ -189,10 +214,14 @@ class SubprocessGitRepositoryFS(object):
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['log', '-1', "--format=%at %ct",
                                 self.repo_rev,
-                                '--', path]
-        output = subprocess.check_output(cmd)
-        author_date, committer_date = output.rstrip().split()
-        return int(author_date), int(committer_date)
+                                '--', path or '.']
+        #log.debug("CMD: %r", " ".join(cmd))
+        output = subprocess.check_output(cmd, text=True)
+        try:
+            author_date, committer_date = output.rstrip().split()
+            return int(author_date), int(committer_date)
+        except ValueError:
+            print(('output', output))
 
     def getinfo(self, path):
         path = self.prefix_path(path)
@@ -240,9 +269,16 @@ class SubprocessGitRepositoryFS(object):
     def get_fileobj(self, path):
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['show', self.to_git_pathspec(path)]
+
+        #return subprocess.check_output(cmd)
+
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-        # p.communicate()
-        return p.stdout
+        #return p.stdout
+
+        #stdout, _ = p.communicate()
+        #return stdout
+
+        return bottle._closeiter(p.stdout, lambda: p.terminate())
 
     def get_contents(self, path):
         path = self.prefix_path(path)
@@ -324,6 +360,8 @@ def configure_app(app, conf=None):
 
 
 def configure_FS(app, conf=None):
+    if conf is None:
+        raise ValueError("conf should not be None")
     FS = None
     # if git configuration is found, use git
     if conf.get('pgs.git_repo_path'):
@@ -406,7 +444,7 @@ def generate_dirlist_html(FS, filepath):
         if FS.isdir(full_path):
             full_path = full_path + '/'
         yield u'<tr><td><a href="{0}">{0}</a></td></tr>'.format(
-            cgi.escape(full_path))  # TODO XXX
+            html_escape(full_path))  # TODO XXX
     yield '</table>'
 
 
