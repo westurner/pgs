@@ -3,7 +3,7 @@ History
 
 
 
-develop (2026-01-20 02:11:33 -0500)
+develop (2026-01-20 03:26:10 -0500)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ::
 
@@ -11,6 +11,7 @@ develop (2026-01-20 02:11:33 -0500)
 
 * MRG,RLS: Merge tag 'v0.1.5' into develop \[b5e57b8\]
 * CLN: .gitignore: add .eggs/ for tox \[541436f\]
+* BLD: Makefile: changelog task to build HISTORY.txt with git-changelog \[42b7b7e\]
 
 
 v0.1.5 (2026-01-20 01:52:59 -0500)
