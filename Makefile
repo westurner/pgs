@@ -38,7 +38,8 @@ lint:
 	flake8 pgs tests
 
 test:
-	python setup.py test
+	#python setup.py test
+	tox
 
 test-all:
 	tox
@@ -71,4 +72,5 @@ dist: clean
 	ls -l dist
 
 install: clean
-	python setup.py install
+	#python setup.py install
+	pip install -e .
