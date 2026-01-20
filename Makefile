@@ -38,7 +38,8 @@ lint:
 	flake8 pgs tests
 
 test:
-	python setup.py test
+	#python setup.py test
+	tox
 
 test-all:
 	tox
@@ -62,8 +63,8 @@ docs:
 	open docs/_build/html/index.html
 
 release: clean
-	python setup.py sdist upload
-	python setup.py bdist_wheel upload
+	python setup.py sdist bdist_wheel
+	twine upload dist/*
 
 dist: clean
 	python setup.py sdist
@@ -71,4 +72,5 @@ dist: clean
 	ls -l dist
 
 install: clean
-	python setup.py install
+	#python setup.py install
+	pip install -e .

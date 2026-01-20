@@ -16,16 +16,17 @@ with codecs.open('HISTORY.rst', encoding='UTF8') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
-    # TODO: put package requirements here
+    'bottle',
 ]
 
 test_requirements = [
-    # TODO: put package test requirements here
+    'webtest',
+    'tox'
 ]
 
 setup(
     name='pgs',
-    version='0.1.4',
+    version='0.1.5',
     description="A bottle webapp for serving static files from a git branch, or from the local filesystem.",
     long_description=readme + '\n\n' + history,
     author="Wes Turner",

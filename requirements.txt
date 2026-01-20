@@ -1,2 +1,4 @@
-wheel==0.38.1
+wheel
+setuptools
 # bottle
+
