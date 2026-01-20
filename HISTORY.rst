@@ -2,14 +2,51 @@ History
 ---------
 
 
-develop (2018-02-10 16:49:59 -0500)
+
+develop (2026-01-20 03:26:10 -0500)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ::
 
-   git log --reverse --pretty=format:'* %s [%h]' v0.1.3..develop
+   git log --reverse --pretty=format:'* %s [%h]' v0.1.5..develop
+
+* MRG,RLS: Merge tag 'v0.1.5' into develop \[b5e57b8\]
+* CLN: .gitignore: add .eggs/ for tox \[541436f\]
+* BLD: Makefile: changelog task to build HISTORY.txt with git-changelog \[42b7b7e\]
+
+
+v0.1.5 (2026-01-20 01:52:59 -0500)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+::
+
+   git log --reverse --pretty=format:'* %s [%h]' v0.1.4..v0.1.5
+
+* MRG: Merge tag 'v0.1.4' into develop \[9bdda59\]
+* BLD: Makefile: upload with twine \[a3638b5\]
+* Bump wheel from 0.23.0 to 0.38.1 \[fe304c9\]
+* UPG: pgs/bottle.py: Upgrade to bottle v 14-dev 0207a34 \[2c3c0a7\]
+* REF,BUG: Python3 support, fix file handle leak by calling process.terminate() upon stdout.close() to avoid warning about leaking process descriptors and tracemalloc \[1ff9af0\]
+* BUG,SEC: requirements.txt: remove version constraint for wheel req \[3187cac\]
+* UPG: pgs/bottle.py, LICENSE.bottle: upgrade to bottle 0.14-dev https://github.com/bottlepy/bottle/blob/62ca0c31987ead4e4776122962294ba976f9dbf9/bottle.py \[b54c093\]
+* BLD: Makefile: test calls \`tox\`, install calls \`pip install -e\` \[44b2d47\]
+* BLD: requirements.txt: add setuptools, wheel \[9cccc79\]
+* BLD: setup.py: reqs+=bottle, test_requirements+=webtest,tox \[fd6ee1b\]
+* BLD: tox.ini,: only test with py314, call pytest -q, install requirements.test.txt first \[a06ae05\]
+* BLD: requirements.txt: upgrade wheel version (closes #11) \[030ede4\]
+* RLS: pgs v0.1.5 \[709d329\]
+* MRG: Merge branch 'release/0.1.5' \[d111b14\]
+
+
+v0.1.4 (2018-02-10 16:51:42 -0500)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+::
+
+   git log --reverse --pretty=format:'* %s [%h]' v0.1.3..v0.1.4
 
 * MRG: Merge tag 'v0.1.3' into develop \[587b2ae\]
 * DOC: HISTORY.rst: git-changelog.py --develop \[141d436\]
+* DOC: HISTORY.rst: git-changelog.py --develop \[afb41fe\]
+* DOC: __init__.py, setup.py: v0.1.4 \[0ca98c5\]
+* MRG: Merge branch 'release/0.1.4' \[1cc2bf2\]
 
 
 v0.1.3 (2018-02-10 16:39:21 -0500)

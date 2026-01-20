@@ -62,6 +62,11 @@ docs:
 	$(MAKE) -C docs html
 	open docs/_build/html/index.html
 
+changelog:
+	# pip install git+https://github.com/westurner/gitchangelog#egg=gitchangelog
+	echo -e 'History\n---------\n' > HISTORY.rst
+	git-changelog.py --fmt=rst --develop >> ./HISTORY.rst
+
 release: clean
 	python setup.py sdist bdist_wheel
 	twine upload dist/*
