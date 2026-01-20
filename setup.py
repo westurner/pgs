@@ -16,11 +16,12 @@ with codecs.open('HISTORY.rst', encoding='UTF8') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
-    # TODO: put package requirements here
+    'bottle',
 ]
 
 test_requirements = [
-    # TODO: put package test requirements here
+    'webtest',
+    'tox'
 ]
 
 setup(
