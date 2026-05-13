@@ -58,12 +58,12 @@ else:
 
 try:
     import bottle
-    from .bottle import parse_date, request, HTTPResponse, HTTPError
+    from bottle import parse_date, request, HTTPResponse, HTTPError, route
 except ImportError:
     # import bottle
     from . import bottle
     # from bottle import Bottle, route, run, request, static_file
-    from .bottle import parse_date, request, HTTPResponse, HTTPError
+    from .bottle import parse_date, request, HTTPResponse, HTTPError, route
 
 try:
     import dulwich
@@ -356,6 +356,11 @@ def configure_app(app, conf=None):
     app.config.update(conf)
     app = configure_FS(app, conf=app.config)
     configure_mimetypes()
+    
+    # Register routes to this specific app instance
+    app.route('<filepath:re:(.*?)@@$>', callback=explicitly_serve_dirlist)
+    app.route('<filepath:path>', callback=serve_static_files)
+    
     return app
 
 
@@ -448,12 +453,6 @@ def generate_dirlist_html(FS, filepath):
     yield '</table>'
 
 
-# bottle app
-
-app = make_app(conf=None)
-
-
-@app.route('<filepath:re:(.*?)@@$>')
 def explicitly_serve_dirlist(filepath):
     # trip leading / and trailing '@@'
     path = filepath[1:][:-2]
@@ -468,8 +467,10 @@ def serve_dirlist(path):
     return HTTPError(404, 'Not found.')
 
 
-@app.route('<filepath:path>')
 def serve_static_files(filepath):
+    if not request.app:
+        log.debug("request.app is False")
+        return
     FS = request.app.config['pgs.FS']
     if filepath == '':
         filepath = '/'  # index.html'
@@ -486,7 +487,7 @@ def serve_static_files(filepath):
                 # TODO: mtime ?
 
     if isinstance(FS, DirectoryRepositoryFS):
-        return bottle.static_file(path, root=app.config['pgs.root_path'])
+        return bottle.static_file(path, root=request.app.config['pgs.root_path'])
     elif isinstance(FS, SubprocessGitRepositoryFS):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
@@ -676,6 +677,8 @@ def main(argv=1j):
         import unittest
         return unittest.main(argv=__argv)
 
+    # bottle app
+    app = make_app(conf=None)
     output = pgs(app, opts)
     output
     return 0
