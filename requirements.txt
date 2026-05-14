@@ -2,3 +2,5 @@ wheel
 setuptools
 # bottle
 
+dulwich
+pygit2
