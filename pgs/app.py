@@ -69,6 +69,11 @@ try:
 except ImportError:
     dulwich = None
 
+try:
+    import pygit2
+except ImportError:
+    pygit2 = None
+
 DEBUG = False
 DEFAULT_ENCODING = 'UTF8'
 
@@ -437,6 +442,97 @@ class DulwichGitRepositoryFS(RepositoryFS):
         return path
 
 
+class Libgit2GitRepositoryFS(RepositoryFS):
+
+    def __init__(self, repo_path):
+        # type: (str) -> None
+        self.repo_path = repo_path
+        self.repo = pygit2.Repository(self.repo_path)
+        self.repo_rev = 'master' # default
+
+    def get_tree(self):
+        commit = self.repo.revparse_single(self.repo_rev)
+        return commit.tree
+
+    def _walk_tree(self, path):
+        # type: (str) -> object
+        tree = self.get_tree()
+        if not path or path == '/':
+            return tree
+        
+        parts = path.strip('/').split('/')
+        current = tree
+        for part in parts:
+            if isinstance(current, pygit2.Tree):
+                try:
+                    entry = current[part]
+                    current = self.repo[entry.id]
+                except KeyError:
+                    return None
+            else:
+                return None
+        return current
+
+    def exists(self, path):
+        # type: (str) -> bool
+        return self._walk_tree(path) is not None
+
+    def isdir(self, path):
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, pygit2.Tree)
+
+    def isfile(self, path):
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, pygit2.Blob)
+
+    def getinfo(self, path):
+        # type: (str) -> dict
+        obj = self._walk_tree(path)
+        import collections
+        import time
+        attrs = collections.OrderedDict()
+        
+        if obj:
+            attrs["size"] = obj.size if isinstance(obj, pygit2.Blob) else 0
+        else:
+            attrs['size'] = 0
+
+        commit = self.repo.revparse_single(self.repo_rev)
+        committer_date = commit.commit_time
+        
+        attrs["created_time"] = committer_date
+        attrs["accessed_time"] = committer_date
+        attrs["modified_time"] = committer_date
+        return attrs
+
+    def listdir(self, path, **kwargs):
+        # type: (str, **dict) -> list
+        obj = self._walk_tree(path)
+        if isinstance(obj, pygit2.Tree):
+            return [entry.name for entry in obj]
+        return []
+
+    def listdirinfo(self, path, **kwargs):
+        # type: (str, **dict) -> iter
+        from pgs.app import pathjoin
+        for p in self.listdir(path, **kwargs):
+            yield self.getinfo(pathjoin(path, p))
+
+    def get_fileobj(self, path, *args, **kwargs):
+        # type: (str, *tuple, **dict) -> object
+        import io
+        obj = self._walk_tree(path)
+        if isinstance(obj, pygit2.Blob):
+            return io.BytesIO(obj.data)
+        return io.BytesIO(b'')
+
+    def getsyspath(self, path, allow_none=False):
+        # type: (str, bool) -> str
+        return path
+
+
 ADDL_MIMETYPES = [
     ('text/x-makefile', '.make'),
     ('text/x-makefile', '.mk'),
@@ -504,7 +600,15 @@ def configure_FS(app, conf=None):
     FS = None
     # if git configuration is found, use git
     if conf.get('pgs.git_repo_path'):
-        FS = SubprocessGitRepositoryFS(app.config)
+        backend = conf.get('pgs.git_backend', 'subprocess')
+        if backend == 'dulwich' and dulwich is not None:
+            FS = DulwichGitRepositoryFS(conf.get('pgs.git_repo_path'))
+            FS.repo_rev = conf.get('pgs.git_repo_rev', b'master').encode('utf-8') if isinstance(conf.get('pgs.git_repo_rev', 'master'), str) else conf.get('pgs.git_repo_rev', b'master')
+        elif backend == 'pygit2' and pygit2 is not None:
+            FS = Libgit2GitRepositoryFS(conf.get('pgs.git_repo_path'))
+            FS.repo_rev = conf.get('pgs.git_repo_rev', 'master')
+        else:
+            FS = SubprocessGitRepositoryFS(app.config)
     # otherwise, serve from the filesystem at pgs.root_path
     elif conf.get('pgs.root_path'):
         FS = DirectoryRepositoryFS(app.config)
@@ -622,7 +726,7 @@ def serve_static_files(filepath):
 
     if isinstance(FS, DirectoryRepositoryFS):
         return bottle.static_file(path, root=request.app.config['pgs.root_path'])
-    elif isinstance(FS, SubprocessGitRepositoryFS):
+    elif isinstance(FS, (SubprocessGitRepositoryFS, DulwichGitRepositoryFS, Libgit2GitRepositoryFS)):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
         return git_static_file(path)
@@ -722,6 +826,7 @@ def pgs(app, config_obj):
         app.config['pgs.git_repo_path'] = os.path.abspath(
             os.path.expanduser(config_obj.git_repo_path))
         app.config['pgs.git_repo_rev'] = config_obj.git_repo_rev
+        app.config['pgs.git_backend'] = getattr(config_obj, 'git_backend', 'subprocess')
 
     log.info("app.config: %s" % app.config)
     app = configure_app(app)
@@ -753,6 +858,10 @@ def main(argv=1j) -> int:
                    dest='git_repo_rev',
                    help='Git repo revision (commit hash, branch, tag)',
                    default='gh-pages')
+    prs.add_option('--git-backend',
+                   dest='git_backend',
+                   help='Git backend to use (subprocess, dulwich, pygit2)',
+                   default='subprocess')
 
     prs.add_option('-H', '--host',
                    dest='host',

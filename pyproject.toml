@@ -38,5 +38,9 @@ pgs = "pgs.app:main"
 [project.optional-dependencies]
 test = [
     "webtest",
-    "tox"
+    "tox",
+    "pygit2",
+    "dulwich"
 ]
+libgit2 = ["pygit2"]
+dulwich = ["dulwich"]

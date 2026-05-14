@@ -8,6 +8,7 @@ from pgs.app import (
     DirectoryRepositoryFS,
     SubprocessGitRepositoryFS,
     DulwichGitRepositoryFS,
+    Libgit2GitRepositoryFS,
 )
 from tests.test_pgs import GIT_REPO_PATH, TEST_WWW_DIR
 
@@ -68,12 +69,18 @@ def conf_dulwich_git():
     return {"pgs.git_repo_path": GIT_REPO_PATH, "pgs.git_repo_rev": b"HEAD"}
 
 
+@pytest.fixture
+def conf_libgit2_git():
+    return {"pgs.git_repo_path": GIT_REPO_PATH, "pgs.git_repo_rev": "HEAD"}
+
+
 @pytest.mark.parametrize(
     "fs_class_name, conf_fixture",
     [
         ("DirectoryRepositoryFS", "conf_dir"),
         ("SubprocessGitRepositoryFS", "conf_subprocess_git"),
         ("DulwichGitRepositoryFS", "conf_dulwich_git"),
+        ("Libgit2GitRepositoryFS", "conf_libgit2_git"),
     ],
 )
 def test_repository_implementations_exist(fs_class_name, conf_fixture, request):
@@ -81,6 +88,13 @@ def test_repository_implementations_exist(fs_class_name, conf_fixture, request):
     cls = globals()[fs_class_name]
 
     if fs_class_name == "DulwichGitRepositoryFS":
+        fs = cls(conf["pgs.git_repo_path"])
+        fs.repo_rev = conf["pgs.git_repo_rev"]
+    elif fs_class_name == "Libgit2GitRepositoryFS":
+        try:
+            import pygit2
+        except ImportError:
+            pytest.skip("pygit2 not installed")
         fs = cls(conf["pgs.git_repo_path"])
         fs.repo_rev = conf["pgs.git_repo_rev"]
     else:
@@ -117,6 +131,16 @@ def test_subprocess_git_specifics(mock_call, conf_subprocess_git):
 def test_dulwich_git_specifics(conf_dulwich_git):
     fs = DulwichGitRepositoryFS(conf_dulwich_git["pgs.git_repo_path"])
     assert fs.repo_path == conf_dulwich_git["pgs.git_repo_path"]
+    assert hasattr(fs, "repo")
+
+
+def test_libgit2_git_specifics(conf_libgit2_git):
+    try:
+        import pygit2
+    except ImportError:
+        pytest.skip("pygit2 not installed")
+    fs = Libgit2GitRepositoryFS(conf_libgit2_git["pgs.git_repo_path"])
+    assert fs.repo_path == conf_libgit2_git["pgs.git_repo_path"]
     assert hasattr(fs, "repo")
 
 
