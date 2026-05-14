@@ -38,6 +38,7 @@ pgs = "pgs.app:main"
 [project.optional-dependencies]
 test = [
     "webtest",
+    "requests",
     "tox",
     "pygit2",
     "dulwich"

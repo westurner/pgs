@@ -1,7 +1,9 @@
-import pytest
-from unittest.mock import MagicMock, patch
-import os
+
 import io
+import os
+import pytest
+import urllib.parse
+from unittest.mock import MagicMock, patch
 
 from pgs.app import (
     RepositoryFS,
@@ -9,6 +11,7 @@ from pgs.app import (
     SubprocessGitRepositoryFS,
     DulwichGitRepositoryFS,
     Libgit2GitRepositoryFS,
+    sanitize_path,
 )
 from tests.test_pgs import GIT_REPO_PATH, TEST_WWW_DIR
 
@@ -189,8 +192,7 @@ def test_is_hidden_path(path, expected):
 
 
 def test_hidden_files_integration():
-    from pgs.app import serve_static_files
-    from bottle import HTTPError
+    from pgs.app import serve_static_files, HTTPError
     from unittest.mock import patch, MagicMock
 
     with patch("pgs.app.request") as mock_req:
@@ -236,11 +238,6 @@ def test_hidden_files_integration():
     ]
 )
 def test_directory_traversal_payloads(payload):
-    from pgs.app import sanitize_path
-    from bottle import request
-    
-    # We unquote URL arguments just like a web framework would
-    import urllib.parse
     decoded_payload = urllib.parse.unquote(payload)
     
     with pytest.raises(ValueError, match="Path traversal detected"):
@@ -251,7 +248,7 @@ def test_pgs_app_configurations():
     from pgs.app import pgs, make_app
     from unittest.mock import patch
 
-    with patch("bottle.run") as mock_run:
+    with patch("pgs.app.bottle.run") as mock_run:
         app = make_app()
         Config = type(
             "Config",

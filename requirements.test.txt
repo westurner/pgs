@@ -1,3 +1,4 @@
 tox
 pytest-cov
 webtest
+requests

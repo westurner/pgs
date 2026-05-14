@@ -938,11 +938,71 @@ def pgs(app, config_obj):
 
     log.info("app.config: %s" % app.config)
     app = configure_app(app)
+    
+    server_kwargs = {}
+    if getattr(config_obj, 'https', True):
+        class SSLWSGIRefServer(bottle.ServerAdapter):
+            def run(self, handler):
+                from wsgiref.simple_server import make_server
+                import ssl
+                import subprocess
+                
+                cert_file = getattr(config_obj, 'cert_file', 'server.pem')
+                key_file = getattr(config_obj, 'key_file', 'server.key')
+                
+                if getattr(config_obj, 'generate_cert', False) and (not os.path.exists(cert_file) or not os.path.exists(key_file)):
+                    if which('openssl'):
+                        # Using -addext for SANs (works in OpenSSL 1.1.1+)
+                        cmd = [
+                            'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-days', '365', 
+                            '-nodes', '-keyout', key_file, '-out', cert_file,
+                            '-subj', '/CN=%s' % self.host,
+                            '-addext', 'subjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' % self.host
+                        ]
+                        subprocess.check_call(cmd)
+                    else:
+                        raise RuntimeError("openssl not found on PATH, cannot generate certificate")
+
+                srv = make_server(self.host, self.port, handler)
+                context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                
+                context.minimum_version = ssl.TLSVersion.TLSv1_3
+                context.maximum_version = ssl.TLSVersion.TLSv1_3
+                
+                cipher_mode = getattr(config_obj, 'https_ciphers', 'hybrid')
+                if cipher_mode == 'hybrid':
+                    try:
+                        context.set_groups("X25519MLKEM768:prime256v1:secp384r1")
+                    except AttributeError:
+                        try:
+                            context.set_ecdh_curve("X25519")
+                        except Exception:
+                            pass
+                elif cipher_mode == 'pq':
+                    try:
+                        context.set_groups("X25519MLKEM768")
+                    except AttributeError:
+                        pass
+                elif cipher_mode == 'nopq':
+                    try:
+                        context.set_groups("X25519")
+                    except AttributeError:
+                        try:
+                            context.set_ecdh_curve("X25519")
+                        except Exception:
+                            pass
+                
+                context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+                srv.socket = context.wrap_socket(srv.socket, server_side=True)
+                srv.serve_forever()
+        server_kwargs['server'] = SSLWSGIRefServer
+
     return bottle.run(app,
                       host=config_obj.host,
                       port=config_obj.port,
                       debug=config_obj.debug,
-                      reloader=config_obj.reloader)
+                      reloader=config_obj.reloader,
+                      **server_kwargs)
 
 
 def get_parser():
@@ -995,6 +1055,33 @@ Usage examples:
                    default=True,
                    action='store_false',
                    help='set bottle reload=False')
+    prs.add_argument('--generate-cert',
+                   dest='generate_cert',
+                   action='store_true',
+                   default=False,
+                   help='Automatically generate a self-signed certificate with OpenSSL if not present')
+    prs.add_argument('--https-ciphers',
+                   dest='https_ciphers',
+                   choices=['nopq', 'hybrid', 'pq'],
+                   default='hybrid',
+                   help='Cipher selection mode: nopq, hybrid, or pq')
+    prs.add_argument('--cert-file',
+                   dest='cert_file',
+                   default='server.pem',
+                   help='Path to the SSL certificate file')
+    prs.add_argument('--key-file',
+                   dest='key_file',
+                   default='server.key',
+                   help='Path to the SSL key file')
+    prs.add_argument('--https',
+                   dest='https',
+                   action='store_true',
+                   default=True,
+                   help='Enable HTTPS support (default: True)')
+    prs.add_argument('--no-https',
+                   dest='https',
+                   action='store_false',
+                   help='Disable HTTPS support')
     prs.add_argument('--block-hidden-files',
                    dest='block_hidden_files',
                    default=False,
