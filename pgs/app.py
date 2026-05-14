@@ -236,7 +236,8 @@ class SubprocessGitRepositoryFS(object):
     def get_object_type(self, path):
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-t', self.to_git_pathspec(path)]
-        return subprocess.check_output(cmd).strip()
+        output = subprocess.check_output(cmd, universal_newlines=True)
+        return output.strip()
 
     def isdir(self, path):
         return self.get_object_type(path) == 'tree'
@@ -249,7 +250,7 @@ class SubprocessGitRepositoryFS(object):
         if kwargs:
             raise NotImplementedError()  # ~-> PyFilesystem interface
         cmd = self.git_cmd() + ['cat-file', '-p', self.to_git_pathspec(path)]
-        output = subprocess.check_output(cmd)
+        output = subprocess.check_output(cmd, universal_newlines=True)
         files = []
         for _line in output.splitlines():
             line = _line.strip()
@@ -273,12 +274,23 @@ class SubprocessGitRepositoryFS(object):
         #return subprocess.check_output(cmd)
 
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-        #return p.stdout
-
-        #stdout, _ = p.communicate()
-        #return stdout
-
-        return bottle._closeiter(p.stdout, lambda: p.terminate())
+        
+        class _StdoutAdapter(object):
+            def __init__(self, process):
+                self.p = process
+                
+            def read(self, *args, **kwargs):
+                return self.p.stdout.read(*args, **kwargs)
+                
+            def __iter__(self):
+                return iter(self.p.stdout)
+                
+            def close(self):
+                self.p.stdout.close()
+                self.p.terminate()
+                self.p.wait()
+                
+        return _StdoutAdapter(p)
 
     def get_contents(self, path):
         path = self.prefix_path(path)
@@ -309,6 +321,7 @@ ADDL_MIMETYPES = [
     ('text/x-makefile', 'Makefile'),
     ('text/x-rst', '.rst'),
     # ('application/json', '.json'),
+    # ('application/ld+json', '.jsonld'),
     ('text/json', '.json'),
     ('text/json', '.jsonld'),
     ('text/csv', '.csv'),
