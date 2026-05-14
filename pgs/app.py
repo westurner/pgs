@@ -612,7 +612,7 @@ def pgs(app, config_obj):
                       reloader=config_obj.reloader)
 
 
-def main(argv=1j):
+def main(argv=1j) -> int:
     import logging
     import optparse
     import sys
@@ -692,8 +692,7 @@ def main(argv=1j):
 
     # bottle app
     app = make_app(conf=None)
-    output = pgs(app, opts)
-    output
+    _output = pgs(app, opts)
     return 0
 
 
