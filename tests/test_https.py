@@ -80,6 +80,7 @@ def test_certificate_generation_and_https_flag(tmpdir, https_enabled, generate, 
     ("nopq", "X25519"),
     ("hybrid", "X25519MLKEM768:prime256v1:secp384r1"),
     ("pq", "X25519MLKEM768"),
+    ("null", None),
 ])
 def test_https_ciphers(tmpdir, cipher_mode, expected_groups, parser):
     """
@@ -133,7 +134,9 @@ def test_https_ciphers(tmpdir, cipher_mode, expected_groups, parser):
                     assert mock_context.minimum_version == ssl.TLSVersion.TLSv1_3
                     assert mock_context.maximum_version == ssl.TLSVersion.TLSv1_3
                     
-                    if expected_groups:
+                    if cipher_mode == 'null':
+                        mock_context.set_ciphers.assert_called_with('eNULL:aNULL:NULL')
+                    elif expected_groups:
                         if hasattr(mock_context, 'set_groups'):
                             mock_context.set_groups.assert_called_with(expected_groups)
                         else:

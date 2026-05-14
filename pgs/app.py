@@ -1004,6 +1004,11 @@ def pgs(app, config_obj):
                             context.set_ecdh_curve("X25519")
                         except Exception:
                             pass
+                elif cipher_mode == 'null':
+                    warningstr = "Warning: A 'null' cipher setting is being used!"
+                    logging.warning(warningstr)
+                    print(warningstr)
+                    context.set_ciphers('eNULL:aNULL:NULL')
                 
                 context.load_cert_chain(certfile=cert_file, keyfile=key_file)
                 srv.socket = context.wrap_socket(srv.socket, server_side=True)
@@ -1075,9 +1080,9 @@ Usage examples:
                    help='Automatically generate a self-signed certificate with OpenSSL if not present')
     prs.add_argument('--https-ciphers',
                    dest='https_ciphers',
-                   choices=['nopq', 'hybrid', 'pq'],
+                   choices=['nopq', 'hybrid', 'pq', 'null'],
                    default='hybrid',
-                   help='Cipher selection mode: nopq, hybrid, or pq')
+                   help='Cipher selection mode: nopq, hybrid, pq, or null')
     prs.add_argument('--cert-file',
                    dest='cert_file',
                    default='server.pem',
