@@ -536,14 +536,29 @@ class Libgit2GitRepositoryFS(RepositoryFS):
 
 
 ADDL_MIMETYPES = [
+    ('text/html', '.html'),
+
+    ## Specify text/ MIME types for these file extensions to make files viewable
+    ('text/plain', '.txt'),
+    ('text/x-rst', '.rst'),
+    ('text/markdown', '.md'),
     ('text/x-makefile', '.make'),
     ('text/x-makefile', '.mk'),
-    ('text/x-rst', '.rst'),
+    ('text/plain', '.cfg'),
+
     # ('application/json', '.json'),
     # ('application/ld+json', '.jsonld'),
     ('text/json', '.json'),
     ('text/json', '.jsonld'),
+
+    #('application/yaml', '.yml'),
+    #('application/yaml', '.yaml'),
+    ('text/yaml', '.yml'),
+    ('text/yaml', '.yaml'),
+
     ('text/csv', '.csv'),
+
+    # Linked Data MIME types (per 5stardata.info)
     ('text/turtle', '.ttl'),
     ('application/n-triples', '.nt'),
     ('application/rdf+xml', '.rdf'),
@@ -789,7 +804,8 @@ def serve_static_files(filepath, block_hidden_files=None):
                 # TODO: mtime ?
 
     if isinstance(FS, DirectoryRepositoryFS):
-        return bottle.static_file(path, root=request.app.config['pgs.root_path'])
+        mimetype, _ = mimetypes.guess_type(path)
+        return bottle.static_file(path, root=request.app.config['pgs.root_path'], mimetype=(mimetype or 'text/plain'))
     elif isinstance(FS, (SubprocessGitRepositoryFS, DulwichGitRepositoryFS, Libgit2GitRepositoryFS)):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
@@ -843,6 +859,11 @@ def git_static_file(filename,
             mimetype, encoding = mimetypes.guess_type(download)
         else:
             mimetype, encoding = mimetypes.guess_type(filename)
+            
+        # default to mimetype text/plain (after mimetypes.guess_type)
+        if not mimetype:
+            mimetype = 'text/plain'
+            
         if encoding:
             headers['Content-Encoding'] = encoding
 
