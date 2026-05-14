@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 """
 pgs.app
 ===============
@@ -27,52 +26,57 @@ Roadmap:
 
 """
 
-import codecs
+from __future__ import print_function
+#import codecs
 import collections
+import io
 import logging
 import mimetypes
 import os.path
 import subprocess
+import sys
 import time
 import urllib.parse
-from typing import Tuple
+from typing import Callable
 
-
-import sys
 IS_PYTHON2 = sys.version_info.major == 2
 
 if IS_PYTHON2:
     import cgi
     import distutils.spawn
+
+    which: Callable = distutils.spawn.find_executable
+
     def html_escape(string, quote=True):
-        string = cgi.escape(string, quote=quote)
+        string = cgi.escape(string, quote=quote)  # type: ignore
         if quote:
             string = string.replace("'", "&#x27;")
         return string
-    which = distutils.spawn.find_executable
 
 else:
     import html
     import shutil
-    html_escape = html.escape
-    which = shutil.which
+
+    which: Callable = shutil.which
+    html_escape: Callable = html.escape
 
     basestring = str
     long = int
 
 try:
     import bottle
-    from bottle import parse_date, request, HTTPResponse, HTTPError, route
+    from bottle import HTTPError, HTTPResponse, parse_date, request
 except ImportError:
     # import bottle
     from . import bottle
+
     # from bottle import Bottle, route, run, request, static_file
-    from .bottle import parse_date, request, HTTPResponse, HTTPError, route
+    from .bottle import HTTPError, HTTPResponse, parse_date, request
 
 try:
     import dulwich
-    import dulwich.repo
     import dulwich.objects
+    import dulwich.repo
 except ImportError:
     dulwich = None
 
@@ -211,7 +215,6 @@ class DirectoryRepositoryFS(RepositoryFS):
             yield self.getinfo(p)
 
     def get_fileobj(self, path, *args, **kwargs):
-        import io
         kwargs.setdefault('encoding', DEFAULT_ENCODING)
         return io.open(self.prefix_path(path), *args, **kwargs)
 
@@ -258,7 +261,7 @@ class SubprocessGitRepositoryFS(RepositoryFS):
         cmd = self.git_cmd() + ['cat-file', '-s', self.to_git_pathspec(path)]
         return int(subprocess.check_output(cmd))
 
-    def get_author_committer_dates(self, path: str) -> Tuple[int, int]:
+    def get_author_committer_dates(self, path: str) -> tuple[int, int]:
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['log', '-1', "--format=%at %ct",
                                 self.repo_rev,
@@ -497,8 +500,6 @@ class Libgit2GitRepositoryFS(RepositoryFS):
     def getinfo(self, path):
         # type: (str) -> dict
         obj = self._walk_tree(path)
-        import collections
-        import time
         attrs = collections.OrderedDict()
         
         if obj:
@@ -523,13 +524,11 @@ class Libgit2GitRepositoryFS(RepositoryFS):
 
     def listdirinfo(self, path, **kwargs):
         # type: (str, **dict) -> iter
-        from pgs.app import pathjoin
         for p in self.listdir(path, **kwargs):
             yield self.getinfo(pathjoin(path, p))
 
     def get_fileobj(self, path, *args, **kwargs):
         # type: (str, *tuple, **dict) -> object
-        import io
         obj = self._walk_tree(path)
         if isinstance(obj, pygit2.Blob):
             return io.BytesIO(obj.data)
