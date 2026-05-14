@@ -8,10 +8,11 @@ test_pgs
 Tests for `pgs` module.
 """
 
-import unittest
 
 import collections
 import os.path
+import sys
+import unittest
 
 import pgs.app
 from pgs.app import pathjoin
@@ -66,6 +67,23 @@ class TestPathJoin(unittest.TestCase):
         output = pathjoin('/a/b', 'index.html')
         self.assertEqual(output, '/a/b/index.html')
 
+    def test_pathjoin_exceptions(self):
+        with self.assertRaises(Exception):
+            pathjoin()
+
+    def test_pathjoin_iterable(self):
+        output = pathjoin(['/a/', '/b/', 'c'])
+        self.assertEqual(output, '/a/b/c')
+
+        output = pathjoin(('/a/', '/b/', 'c'))
+        self.assertEqual(output, '/a/b/c')
+
+    def test_pathjoin_non_string(self):
+        output = pathjoin('/a', None, 'c')
+        self.assertEqual(output, '/a//c')
+        
+        output = pathjoin(None, '/a', 'c')
+        self.assertEqual(output, '/a/c')
 
 class FSTestUtils(object):
 

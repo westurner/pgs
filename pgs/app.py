@@ -35,9 +35,6 @@ import os.path
 import subprocess
 import time
 
-# import tracemalloc
-# tracemalloc.start()
-
 import sys
 IS_PYTHON2 = sys.version_info.major == 2
 
@@ -67,6 +64,8 @@ except ImportError:
 
 try:
     import dulwich
+    import dulwich.repo
+    import dulwich.objects
 except ImportError:
     dulwich = None
 
@@ -103,12 +102,13 @@ def pathjoin(*args, **kwargs):
         if len_ < 0:
             raise Exception('no args specified')
         elif len_ == 0:
-            if not isinstance(args, basestring):
-                if hasattr(args, '__iter__'):
-                    _args = args
-                    _args
+            if not isinstance(args[0], basestring):
+                if hasattr(args[0], '__iter__'):
                     args = args[0]
+                    len_ = len(args) - 1
         for i, arg in enumerate(args):
+            if not isinstance(arg, basestring):
+                arg = ""
             if not i:
                 yield arg.rstrip('/')
             elif i == len_:
@@ -119,7 +119,42 @@ def pathjoin(*args, **kwargs):
     return sanitize_path(joined_path)
 
 
-class DirectoryRepositoryFS(object):
+
+class RepositoryFS(object):
+    def exists(self, path):
+        # type: (str) -> bool
+        raise NotImplementedError()
+
+    def isdir(self, path):
+        # type: (str) -> bool
+        raise NotImplementedError()
+
+    def isfile(self, path):
+        # type: (str) -> bool
+        raise NotImplementedError()
+
+    def getinfo(self, path):
+        # type: (str) -> dict
+        raise NotImplementedError()
+
+    def listdir(self, path, **kwargs):
+        # type: (str, **dict) -> list
+        raise NotImplementedError()
+
+    def listdirinfo(self, path, **kwargs):
+        # type: (str, **dict) -> iter
+        raise NotImplementedError()
+
+    def get_fileobj(self, path, *args, **kwargs):
+        # type: (str, *tuple, **dict) -> object
+        raise NotImplementedError()
+
+    def getsyspath(self, path, allow_none=False):
+        # type: (str, bool) -> str
+        raise NotImplementedError()
+
+
+class DirectoryRepositoryFS(RepositoryFS):
 
     def __init__(self, conf):
         self.conf = conf
@@ -164,8 +199,9 @@ class DirectoryRepositoryFS(object):
             yield self.getinfo(p)
 
     def get_fileobj(self, path, *args, **kwargs):
+        import io
         kwargs.setdefault('encoding', DEFAULT_ENCODING)
-        return codecs.open(self.prefix_path(path), *args, **kwargs)
+        return io.open(self.prefix_path(path), *args, **kwargs)
 
     def getsyspath(self, path, allow_none=False):
         return self.prefix_path(path)
@@ -174,7 +210,7 @@ class DirectoryRepositoryFS(object):
         return bool(self.getsyspath(path))
 
 
-class SubprocessGitRepositoryFS(object):
+class SubprocessGitRepositoryFS(RepositoryFS):
 
     GIT_BIN = os.environ.get('GIT_BIN', which('git'))
 
@@ -205,12 +241,12 @@ class SubprocessGitRepositoryFS(object):
         retcode = subprocess.call(cmd, stderr=subp_stderr)
         return retcode == 0
 
-    def getsize(self, path):
+    def getsize(self, path: str) -> int:
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-s', self.to_git_pathspec(path)]
-        return long(subprocess.check_output(cmd))
+        return int(subprocess.check_output(cmd))
 
-    def get_author_committer_dates(self, path):
+    def get_author_committer_dates(self, path: str) -> Tuple[int, int]:
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['log', '-1', "--format=%at %ct",
                                 self.repo_rev,
@@ -222,6 +258,7 @@ class SubprocessGitRepositoryFS(object):
             return int(author_date), int(committer_date)
         except ValueError:
             print(('output', output))
+            return 0, 0
 
     def getinfo(self, path):
         path = self.prefix_path(path)
@@ -301,24 +338,105 @@ class SubprocessGitRepositoryFS(object):
         return path
 
 
-class DulwichGitRepositoryFS(object):
+class DulwichGitRepositoryFS(RepositoryFS):
 
     def __init__(self, repo_path):
+        # type: (str) -> None
         self.repo_path = repo_path
         self.repo = dulwich.repo.Repo(self.repo_path)
+        self.repo_rev = b'master' # default
+
+    def to_git_path(self, path):
+        # type: (str) -> bytes
+        return path.lstrip('/').encode('utf-8')
+
+    def get_tree(self):
+        commit = self.repo[self.repo_rev]
+        return self.repo[commit.tree]
+
+    def _walk_tree(self, path):
+        # type: (str) -> object
+        tree = self.get_tree()
+        if not path or path == '/':
+            return tree
+        
+        parts = path.strip('/').split('/')
+        current = tree
+        for part in parts:
+            if isinstance(current, dulwich.objects.Tree):
+                b_part = part.encode('utf-8')
+                if b_part in current:
+                    mode, sha = current[b_part]
+                    current = self.repo[sha]
+                else:
+                    return None
+            else:
+                return None
+        return current
 
     def exists(self, path):
-        "TODO"
+        # type: (str) -> bool
+        return self._walk_tree(path) is not None
 
     def isdir(self, path):
-        "TODO"
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, dulwich.objects.Tree)
 
     def isfile(self, path):
-        "TODO"
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, dulwich.objects.Blob)
+
+    def getinfo(self, path):
+        # type: (str) -> dict
+        obj = self._walk_tree(path)
+        import collections
+        import time
+        attrs = collections.OrderedDict()
+        
+        if obj:
+            attrs["size"] = obj.raw_length() if isinstance(obj, dulwich.objects.Blob) else 0
+        else:
+            attrs['size'] = 0
+            
+        commit = self.repo[self.repo_rev]
+        committer_date = commit.commit_time
+        
+        attrs["created_time"] = committer_date
+        attrs["accessed_time"] = committer_date
+        attrs["modified_time"] = committer_date
+        return attrs
+
+    def listdir(self, path, **kwargs):
+        # type: (str, **dict) -> list
+        obj = self._walk_tree(path)
+        if isinstance(obj, dulwich.objects.Tree):
+            return [item.path.decode('utf-8') for item in obj.items()]
+        return []
+
+    def listdirinfo(self, path, **kwargs):
+        # type: (str, **dict) -> iter
+        from pgs.app import pathjoin
+        for p in self.listdir(path, **kwargs):
+            yield self.getinfo(pathjoin(path, p))
+
+    def get_fileobj(self, path, *args, **kwargs):
+        # type: (str, *tuple, **dict) -> object
+        import io
+        obj = self._walk_tree(path)
+        if isinstance(obj, dulwich.objects.Blob):
+            return io.BytesIO(obj.data)
+        return io.BytesIO(b'')
+
+    def getsyspath(self, path, allow_none=False):
+        # type: (str, bool) -> str
+        return path
 
 
 ADDL_MIMETYPES = [
-    ('text/x-makefile', 'Makefile'),
+    ('text/x-makefile', '.make'),
+    ('text/x-makefile', '.mk'),
     ('text/x-rst', '.rst'),
     # ('application/json', '.json'),
     # ('application/ld+json', '.jsonld'),
@@ -612,7 +730,7 @@ def pgs(app, config_obj):
                       reloader=config_obj.reloader)
 
 
-def main(argv=1j) -> int:
+def main(argv=1j):
     import logging
     import optparse
     import sys
