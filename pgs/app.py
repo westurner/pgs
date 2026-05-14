@@ -749,16 +749,23 @@ def generate_dirlist_html(FS, filepath):
     Yields:
         str: lines of an HTML table
     """
-    yield '<table class="dirlist">'
+    yield '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n'
+    yield '<title>%s Directory listing</title>\n' % html_escape(filepath)
+    yield '<style>\n'
+    yield '  :root { color-scheme: light dark; }\n'
+    yield '  body { font-family: monospace; padding: 1rem; }\n'
+    yield '  table.dirlist td { padding: 0.25rem 1rem 0.25rem 0; }\n'
+    yield '</style>\n</head>\n<body>\n'
+    yield '<table class="dirlist">\n'
     if filepath == '/':
         filepath = ''
-    for name in FS.listdir(filepath):
+    for name in sorted(FS.listdir(filepath)):
         full_path = pathjoin(filepath, name)
         if FS.isdir(full_path):
             full_path = full_path + '/'
-        yield u'<tr><td><a href="{0}">{0}</a></td></tr>'.format(
+        yield u'<tr><td><a href="{0}">{0}</a></td></tr>\n'.format(
             html_escape(full_path))  # TODO XXX
-    yield '</table>'
+    yield '</table>\n</body>\n</html>'
 
 
 def explicitly_serve_dirlist(filepath):
