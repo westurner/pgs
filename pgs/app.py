@@ -307,7 +307,6 @@ class SubprocessGitRepositoryFS(RepositoryFS):
     def get_fileobj(self, path):
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['show', self.to_git_pathspec(path)]
-
         #return subprocess.check_output(cmd)
 
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
@@ -315,18 +314,18 @@ class SubprocessGitRepositoryFS(RepositoryFS):
         class _StdoutAdapter(object):
             def __init__(self, process):
                 self.p = process
-                
+
             def read(self, *args, **kwargs):
                 return self.p.stdout.read(*args, **kwargs)
-                
+
             def __iter__(self):
                 return iter(self.p.stdout)
-                
+
             def close(self):
                 self.p.stdout.close()
                 self.p.terminate()
                 self.p.wait()
-                
+
         return _StdoutAdapter(p)
 
     def get_contents(self, path):
@@ -399,8 +398,12 @@ class DulwichGitRepositoryFS(RepositoryFS):
             attrs["size"] = obj.raw_length() if isinstance(obj, dulwich.objects.Blob) else 0
         else:
             attrs['size'] = 0
-            
-        commit = self.repo[self.repo_rev]
+
+        try: 
+            commit = self.repo[self.repo_rev]
+        except KeyError:
+            raise
+            #raise Exception(('Commit not found:', (self.repo_rev,)))
         committer_date = commit.commit_time
         
         attrs["created_time"] = committer_date
@@ -696,8 +699,7 @@ def git_static_file(filename,
         return HTTPResponse(status=304, **headers)
 
     body = '' if request.method == 'HEAD' else FS.get_fileobj(filename)
-
-    clen
+    # clen
     # headers["Accept-Ranges"] = "bytes"
     # ranges = request.environ.get('HTTP_RANGE')
     # if 'HTTP_RANGE' in request.environ:
@@ -730,7 +732,7 @@ def pgs(app, config_obj):
                       reloader=config_obj.reloader)
 
 
-def main(argv=1j):
+def main(argv=1j) -> int:
     import logging
     import optparse
     import sys
@@ -806,7 +808,8 @@ def main(argv=1j):
     if opts.run_tests:
         __argv = [sys.argv[0]] + args
         import unittest
-        return unittest.main(argv=__argv)
+        unittest.main(argv=__argv)
+        return 0
 
     # bottle app
     app = make_app(conf=None)

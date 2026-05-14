@@ -118,3 +118,54 @@ def test_dulwich_git_specifics(conf_dulwich_git):
     fs = DulwichGitRepositoryFS(conf_dulwich_git["pgs.git_repo_path"])
     assert fs.repo_path == conf_dulwich_git["pgs.git_repo_path"]
     assert hasattr(fs, "repo")
+
+def test_missing_coverage():
+    from pgs.app import sanitize_path
+    import pytest
+    with pytest.raises(Exception):
+        sanitize_path("/../something")
+
+    from pgs.app import pgs, make_app
+    from unittest.mock import patch
+    with patch('bottle.run') as mock_run:
+        app = make_app()
+        Config = type('Config', (), {'root_path': '.', 'git_repo_path': None, 'host': 'localhost', 'port': 8080, 'debug': True, 'reloader': False})
+        pgs(app, Config())
+        mock_run.assert_called_once()
+        Config2 = type('Config', (), {'root_path': None, 'git_repo_path': '.', 'git_repo_rev': 'develop', 'host': 'localhost', 'port': 8080, 'debug': True, 'reloader': False})
+        pgs(app, Config2())
+
+    from pgs.app import main
+    import sys
+    with patch('sys.argv', ['pgs', '-p', '.', '-q']), patch('pgs.app.pgs'):
+        main()
+    with patch('sys.argv', ['pgs', '-p', '.', '-v']), patch('pgs.app.pgs'):
+        main()
+    with patch('sys.argv', ['pgs', '-t']), patch('unittest.main'):
+        main()
+
+    from pgs.app import explicitly_serve_dirlist, serve_static_files
+    with patch('pgs.app.serve_dirlist') as mock_serve:
+        mock_serve.return_value = 'ok'
+        assert explicitly_serve_dirlist('/test@@') == 'ok'
+    with patch('pgs.app.request') as mock_req:
+        mock_req.app = False
+        assert serve_static_files('') is None
+
+    from pgs.app import DulwichGitRepositoryFS
+    from unittest.mock import MagicMock
+    fs = DulwichGitRepositoryFS('.')
+    fs._walk_tree = MagicMock(return_value=None)
+    fs.repo_rev = b'HEAD'
+    assert fs.exists('not_found') is False
+    assert fs.isdir('not_found') is False
+    assert fs.isfile('not_found') is False
+    assert getattr(fs, 'getinfo')('not_found')
+    assert fs.listdir('not_found') == []
+    
+    blob_mock = MagicMock()
+    blob_mock.data = b'testdata'
+    fs._walk_tree = MagicMock(return_value=blob_mock)
+    fs.repo = MagicMock()
+    with patch('dulwich.objects.Blob', type(blob_mock)):
+        assert fs.get_fileobj('found').read() == blob_mock.data
