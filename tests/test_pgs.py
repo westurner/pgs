@@ -236,7 +236,7 @@ class TestWebPgs_SubprocessGitRepositoryFS(unittest.TestCase):
     conf = confs['git0']
 
     def setUp(self):
-        app = pgs.app.configure_app(pgs.app.app, self.conf)
+        app = pgs.app.make_app(self.conf)
         self.app = webtest.TestApp(app)
 
     def test_root(self):
