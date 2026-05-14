@@ -35,6 +35,7 @@ import os.path
 import subprocess
 import time
 import urllib.parse
+from typing import Tuple
 
 
 import sys
@@ -43,7 +44,11 @@ IS_PYTHON2 = sys.version_info.major == 2
 if IS_PYTHON2:
     import cgi
     import distutils.spawn
-    html_escape = cgi.escape
+    def html_escape(string, quote=True):
+        string = cgi.escape(string, quote=quote)
+        if quote:
+            string = string.replace("'", "&#x27;")
+        return string
     which = distutils.spawn.find_executable
 
 else:
@@ -756,6 +761,7 @@ def generate_dirlist_html(FS, filepath):
     yield '  body { font-family: monospace; padding: 1rem; }\n'
     yield '  table.dirlist td { padding: 0.25rem 1rem 0.25rem 0; }\n'
     yield '</style>\n</head>\n<body>\n'
+    yield '<h1>%s Directory listing</h1>\n' % html_escape(filepath)
     yield '<table class="dirlist">\n'
     if filepath == '/':
         filepath = ''

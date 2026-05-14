@@ -319,5 +319,33 @@ class TestWebPgs_DirectoryRepositoryFS(TestWebPgs_SubprocessGitRepositoryFS):
     conf = confs['fs0']
 
 
+class TestHTMLEscape(unittest.TestCase):
+    def test_html_escape_owasp_param(self):
+        # CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')
+        # OWASP recommends escaping: & < > " '
+        from pgs.app import html_escape
+        
+        test_cases = [
+            # (TestCase description, payload, expected_output)
+            ('Basic ampersand', 'a & b', 'a &amp; b'),
+            ('Less than', 'a < b', 'a &lt; b'),
+            ('Greater than', 'a > b', 'a &gt; b'),
+            ('Double quotes', '"double"', '&quot;double&quot;'),
+            ('Single quotes', "'single'", '&#x27;single&#x27;'),
+            ('Basic script tag', '<script>alert(1)</script>', '&lt;script&gt;alert(1)&lt;/script&gt;'),
+            ('Attribute injection double quotes', '"><script>alert(1)</script><a href="', '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;a href=&quot;'),
+            ('Attribute injection single quotes', "' onmouseover='alert(1)", "&#x27; onmouseover=&#x27;alert(1)"),
+            ('Multiple tags', '&lt;&gt;', '&amp;lt;&amp;gt;'),  # Escaping an already XML-escaped string
+            ('JavaScript link (text layer)', 'javascript://%250Aalert(1)', 'javascript://%250Aalert(1)'), # Doesn't contain escapable chars
+            ('Complex XSS Vector', '<IMG SRC=javascript:alert(String.fromCharCode(88,83,83))>', '&lt;IMG SRC=javascript:alert(String.fromCharCode(88,83,83))&gt;'),
+            ('Image tag with onerror attribute', '<img src=x onerror=alert(1)>', '&lt;img src=x onerror=alert(1)&gt;'),
+        ]
+        
+        for desc, payload, expected in test_cases:
+            with self.subTest(msg=desc, payload=payload):
+                self.assertEqual(html_escape(payload), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
+
