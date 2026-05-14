@@ -837,64 +837,89 @@ def pgs(app, config_obj):
                       reloader=config_obj.reloader)
 
 
-def main(argv=1j) -> int:
-    import logging
-    import optparse
-    import sys
+def get_parser():
+    import argparse
+    import textwrap
 
-    prs = optparse.OptionParser(
-        usage="%prog [-p <path>] [-g <repopath>] [-r <rev/tag/branch>]",
+    epilog = """
+Usage examples:
+  pgs -p ./my/directory
+  pgs -g ./my/git/repo -r main
+  pgs -g . -r HEAD --git-backend dulwich -P 8080
+
+"""
+    prs = argparse.ArgumentParser(
+        prog='pgs',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Serve a directory or a git revision over HTTP "
-                    "with Bottle, WSGI, MIME types, and Last-Modified headers")
+                    "with Bottle, WSGI, MIME types, and Last-Modified headers",
+        epilog=textwrap.dedent(epilog))
 
-    prs.add_option('-p', '--path', '--prefix',
+    prs.add_argument('-p', '--path', '--prefix',
                    dest='root_path',
                    help='Filesystem path to serve files from')
 
-    prs.add_option('-g', '--git',
+    prs.add_argument('-g', '--git',
                    dest='git_repo_path',
                    help='Path to git repo to serve files from')
-    prs.add_option('-r', '--rev',
+    prs.add_argument('-r', '--rev',
                    dest='git_repo_rev',
                    help='Git repo revision (commit hash, branch, tag)',
                    default='gh-pages')
-    prs.add_option('--git-backend',
+    prs.add_argument('--git-backend',
                    dest='git_backend',
                    help='Git backend to use (subprocess, dulwich, pygit2)',
                    default='subprocess')
 
-    prs.add_option('-H', '--host',
+    prs.add_argument('-H', '--host',
                    dest='host',
                    default='localhost')
-    prs.add_option('-P', '--port',
+    prs.add_argument('-P', '--port',
                    dest='port',
-                   default='8082')
-    prs.add_option('--debug',
+                   default='8082', type=int)
+    prs.add_argument('--debug',
                    dest='debug',
                    default=True,
                    action='store_false',
                    help='set bottle debug=False')
-    prs.add_option('--reload',
+    prs.add_argument('--reload',
                    dest='reloader',
                    default=True,
                    action='store_false',
                    help='set bottle reload=False')
 
-    prs.add_option('-v', '--verbose',
+    prs.add_argument('-v', '--verbose',
                    dest='verbose',
-                   action='store_true',)
-    prs.add_option('-q', '--quiet',
+                   action='store_true')
+    prs.add_argument('-q', '--quiet',
                    dest='quiet',
-                   action='store_true',)
-    prs.add_option('-t', '--test',
+                   action='store_true')
+    prs.add_argument('-t', '--test',
                    dest='run_tests',
-                   action='store_true',)
+                   action='store_true')
+
+    return prs
+
+def main(argv=1j) -> int:
+    import logging
+    import sys
+
+    prs = get_parser()
+    
+    try:
+        import argcomplete
+        argcomplete.autocomplete(prs)
+    except ImportError:
+        pass
+
     _argv = []
     if argv == 1j:
         _argv = sys.argv[1:]
     elif argv is None:
         _argv = []
-    (opts, args) = prs.parse_args(args=_argv)  # _argv)
+    else:
+        _argv = argv
+    opts, args = prs.parse_known_args(args=_argv)
 
     loglevel = logging.INFO
     if opts.quiet:
