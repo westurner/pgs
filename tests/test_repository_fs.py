@@ -148,8 +148,103 @@ def test_sanitize_path_exception():
     from pgs.app import sanitize_path
     import pytest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         sanitize_path("/../something")
+        
+    with pytest.raises(ValueError):
+        sanitize_path("../something")
+
+    with pytest.raises(ValueError):
+        sanitize_path("a/../../something")
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        # Hidden files/directories
+        ("/.env", True),
+        ("/a/b/.git/config", True),
+        (".hidden_file.txt", True),
+        ("path/to/.folder/file", True),
+        (".DS_Store", True),
+        
+        # Valid structural tokens
+        (".", False),
+        ("..", False),
+        ("./file.txt", False),
+        ("../file.txt", False),
+        ("a/./b/../c", False),
+
+        # Normal files
+        ("index.html", False),
+        ("/css/style.main.css", False),
+        ("a.b.c.txt", False),
+        ("", False),
+        ("/", False),
+    ]
+)
+def test_is_hidden_path(path, expected):
+    from pgs.app import is_hidden_path
+    
+    assert is_hidden_path(path) == expected
+
+
+def test_hidden_files_integration():
+    from pgs.app import serve_static_files
+    from bottle import HTTPError
+    from unittest.mock import patch, MagicMock
+
+    with patch("pgs.app.request") as mock_req:
+        mock_req.app = MagicMock()
+        mock_req.app.config = {'pgs.block_hidden_files': True}
+        from pgs.app import DirectoryRepositoryFS
+        mock_fs = MagicMock(spec=DirectoryRepositoryFS)
+        mock_fs.exists.return_value = False
+        mock_req.app.config['pgs.FS'] = mock_fs
+        mock_req.app.config['pgs.root_path'] = '.'
+        
+        result = serve_static_files("/.env", block_hidden_files=True)
+        assert isinstance(result, HTTPError)
+        assert result.status_code == 403
+
+        result = serve_static_files("/a/b/.git/config", block_hidden_files=True)
+        assert isinstance(result, HTTPError)
+        assert result.status_code == 403
+        
+        # When block_hidden_files=False, it should not return 403 for hidden files
+        # It will instead proceed and return 404 (since mock FS is empty in this test)
+        result_allowed = serve_static_files("/.env", block_hidden_files=False)
+        assert isinstance(result_allowed, HTTPError)
+        assert result_allowed.status_code == 404
+
+# CWE-22: Path Traversal
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "../etc/passwd",
+        "../../etc/passwd",
+        "../../../../../../../../../../../../../etc/passwd",
+        "/../../../../../../../../../../../../../etc/passwd",
+        "//../../../../../../../../../../../../../etc/passwd",
+        "/./../../../../../../../../../../../../../etc/passwd",
+        "/%2e%2e/%2e%2e/etc/passwd", # URL encoded
+        "/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd", # URL encoded
+        "a/../../something",
+        "..%2f..%2fetc%2fpasswd",
+        "/dir/../../../../etc/passwd",
+        "..\\..\\windows\\win.ini", # Windows traversal
+        "/..\\..\\windows\\win.ini",
+    ]
+)
+def test_directory_traversal_payloads(payload):
+    from pgs.app import sanitize_path
+    from bottle import request
+    
+    # We unquote URL arguments just like a web framework would
+    import urllib.parse
+    decoded_payload = urllib.parse.unquote(payload)
+    
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        sanitize_path(decoded_payload)
 
 
 def test_pgs_app_configurations():
@@ -232,3 +327,46 @@ def test_dulwich_git_fs_fallbacks():
     fs.repo = MagicMock()
     with patch("dulwich.objects.Blob", type(blob_mock)):
         assert fs.get_fileobj("found").read() == blob_mock.data
+import pytest
+from pgs.app import sanitize_path, is_hidden_path
+import urllib.parse
+
+@pytest.mark.parametrize(
+    "path, expected_raise",
+    [
+        # Standard traversal
+        ("../../../etc/passwd", True),
+        # Null bytes
+        ("foo/bar\0.txt", True),
+        # Encoded traversal
+        ("%2e%2e%2f%2e%2e%2fetc%2fpasswd", True),
+        # Double encoded traversal
+        ("%252e%252e%252f%252e%252e%252fetc%252fpasswd", True),
+        # Valid path
+        ("css/style.css", False),
+    ]
+)
+def test_sanitize_path_traversal(path, expected_raise):
+    if expected_raise:
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            sanitize_path(path)
+    else:
+        sanitize_path(path)
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        # Straight hidden files
+        (".env", True),
+        (".git/config", True),
+        ("css/.hidden.css", True),
+        # Windows trailing dot or space tricks to bypass?
+        (".env ", True), # startswith '.' is true
+        (" .env", True), # Trailing spaces before the extension are stripped to prevent bypasses
+        # Unicode homoglyphs?
+        # Not usually handled by simple startswith unless normalized
+    ]
+)
+def test_is_hidden_path_edge_cases(path, expected):
+    assert is_hidden_path(path) == expected
+

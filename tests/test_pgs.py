@@ -78,12 +78,12 @@ class TestPathJoin(unittest.TestCase):
         output = pathjoin(('/a/', '/b/', 'c'))
         self.assertEqual(output, '/a/b/c')
 
-    def test_pathjoin_non_string(self):
-        output = pathjoin('/a', None, 'c')
-        self.assertEqual(output, '/a//c')
+    def test_pathjoin_none_string(self):
+        with self.assertRaises(TypeError):
+            pathjoin('/a', None, 'c')
         
-        output = pathjoin(None, '/a', 'c')
-        self.assertEqual(output, '/a/c')
+        with self.assertRaises(TypeError):
+            pathjoin(None, '/a', 'c')
 
 class FSTestUtils(object):
 
@@ -272,6 +272,46 @@ class TestWebPgs_SubprocessGitRepositoryFS(unittest.TestCase):
                     '/@@', '/a/@@', '/a/b/@@', '/a@@']:
             rsp = self.app.get(url)
             rsp.mustcontain(u'class="dirlist"')
+
+    def test_security_web_access(self):
+        # By default, block_hidden_files is False unless enabled
+        self.app.app.config['pgs.block_hidden_files'] = True
+        
+        # Test hidden files block
+        hidden_urls = [
+            '/.env',
+            '/a/b/.hidden',
+            '/ .git',
+            '/.git/config'
+        ]
+        for url in hidden_urls:
+            rsp = self.app.get(url, expect_errors=True)
+            self.assertEqual(rsp.status_code, 403, "URL %r should be 403 Forbidden" % url)
+
+        # Ensure that valid structural tokens and files are not inappropriately blocked
+        valid_urls = [
+            '/index.html',
+            '/a/b/c'
+        ]
+        for url in valid_urls:
+            rsp = self.app.get(url, expect_errors=True)
+            # They should exist or return 404, not 403
+            self.assertNotEqual(rsp.status_code, 403, "URL %r should NOT be 403" % url)
+
+        # Test double/URL-encoded path traversal protection
+        traversal_urls = [
+            #'../../../../etc/passwd',  # TODO: fix `AssertionError: PATH_INFO doesn't start with /: '../../../../etc/passwd'`
+            '/../../../../etc/passwd',
+            #'%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd',
+            '/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd',
+            #'%252e%252e/%252e%252e/%252e%252e/%252e%252e/etc/passwd',
+            '/%252e%252e/%252e%252e/%252e%252e/%252e%252e/etc/passwd',
+            '/a/b/c/\0_hidden_test.txt'
+        ]
+        for url in traversal_urls:
+            # We expect a 500 error triggered by the ValueError
+            rsp = self.app.get(url, expect_errors=True)
+            self.assertEqual(rsp.status_code, 500, "URL %r should trigger a 500 internal server error due to ValueError" % url)
 
 
 class TestWebPgs_DirectoryRepositoryFS(TestWebPgs_SubprocessGitRepositoryFS):

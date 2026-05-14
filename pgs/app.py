@@ -34,6 +34,8 @@ import mimetypes
 import os.path
 import subprocess
 import time
+import urllib.parse
+
 
 import sys
 IS_PYTHON2 = sys.version_info.major == 2
@@ -113,7 +115,7 @@ def pathjoin(*args, **kwargs):
                     len_ = len(args) - 1
         for i, arg in enumerate(args):
             if not isinstance(arg, basestring):
-                arg = ""
+                raise TypeError("pathjoin() argument must be a string, not %s" % type(arg).__name__)
             if not i:
                 yield arg.rstrip('/')
             elif i == len_:
@@ -631,12 +633,61 @@ def make_app(conf=None):
 #        if value:
 #            app.config['pgs.FS'] = SubprocessGitRepositoryFS(app.config)
 
-
 def sanitize_path(path):
-    # XXX TODO FIXME
-    if '/../' in path:
-        raise Exception()
-    return path
+    if '\0' in path:
+        raise ValueError("Path traversal detected")
+        
+    # Decode URL-encoded paths, protecting against double/multiple encoding
+    decoded_path = urllib.parse.unquote(path)
+    prev = path
+    while decoded_path != prev:
+        prev = decoded_path
+        decoded_path = urllib.parse.unquote(decoded_path)
+    
+    # Normalize backslashes to forward slashes (e.g. Windows paths)
+    normalized = decoded_path.replace('\\', '/')
+    
+    has_leading_slash = normalized.startswith('/')
+    has_trailing_slash = normalized.endswith('/') and len(normalized) > 1
+    
+    # Strip leading slashes so normpath doesn't treat it as absolute
+    stripped = normalized.lstrip('/')
+    
+    # Empty string from stripping
+    if not stripped:
+        if not path and not decoded_path:
+            return ''
+        return '/' if has_leading_slash else '.'
+
+    norm = os.path.normpath(stripped)
+    
+    # Check if the normalized path attempts to navigate out of the root
+    if norm.startswith('../') or norm == '..':
+        raise ValueError("Path traversal detected")
+        
+    # Return the normalized, forward-slashed version to prevent symlink bypasses
+    # by ensuring backend filesystems resolve lexically evaluated safe paths
+    res = norm.replace('\\', '/')
+    
+    if has_leading_slash and res != '.':
+        res = '/' + res
+    if has_trailing_slash and not res.endswith('/'):
+        res += '/'
+        
+    return res
+
+
+def is_hidden_path(path):
+    """
+    Checks if a path contains any hidden files or directories 
+    (starting with '.' but not exactly '.' or '..').
+    """
+    parts = path.strip('/\\').split('/')
+    for part in parts:
+        clean_part = part.strip()
+        if clean_part.startswith('.') and clean_part not in ['.', '..', '']:
+            return True
+    return False
 
 
 def rewrite_path(FS, _path):
@@ -649,6 +700,10 @@ def rewrite_path(FS, _path):
     """
     path = sanitize_path(_path)
     log.debug('sntpath: %r' % path)
+    
+    if FS is None:
+        raise ValueError("Backend filesystem (FS) is not configured.")
+
     if FS.exists(path):
         if FS.isdir(path):
             dir_index_html_path = pathjoin(path, 'index.html')
@@ -705,16 +760,25 @@ def serve_dirlist(path):
     return HTTPError(404, 'Not found.')
 
 
-def serve_static_files(filepath):
+def serve_static_files(filepath, block_hidden_files=None):
     if not request.app:
         log.debug("request.app is False")
         return
+
     FS = request.app.config['pgs.FS']
+    if block_hidden_files is None:
+        block_hidden_files = request.app.config.get('pgs.block_hidden_files', False)
+
     if filepath == '':
         filepath = '/'  # index.html'
     log.debug("filepath: %r" % filepath)
     path = rewrite_path(FS, filepath)  # or ''  # XXX
     log.debug("rwpath  : %r" % path)
+    
+    # Hidden files check MUST operate on the fully normalized and parsed path
+    if block_hidden_files and is_hidden_path(path):
+        return HTTPError(403, "Access denied to hidden files.")
+
     if FS.exists(path) and FS.isdir(path):
         index_html = pathjoin(path, 'index.html')
         if FS.exists(index_html) and FS.isfile(index_html):
@@ -729,7 +793,7 @@ def serve_static_files(filepath):
     elif isinstance(FS, (SubprocessGitRepositoryFS, DulwichGitRepositoryFS, Libgit2GitRepositoryFS)):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
-        return git_static_file(path)
+        return git_static_file(path, block_hidden_files=block_hidden_files)
     else:
         raise Exception(FS, type(FS))
 
@@ -737,7 +801,8 @@ def serve_static_files(filepath):
 def git_static_file(filename,
                     mimetype='auto',
                     download=False,
-                    charset='UTF-8'):
+                    charset='UTF-8',
+                    block_hidden_files=False):
     """ This method is derived from bottle.static_file:
 
         Open [a file] and return :exc:`HTTPResponse` with status
@@ -759,6 +824,10 @@ def git_static_file(filename,
     # root = os.path.abspath(root) + os.sep
     # filename = os.path.abspath(pathjoin(root, filename.strip('/\\')))
     filename = filename.strip('/\\')
+    
+    if block_hidden_files and is_hidden_path(filename):
+        return HTTPError(403, "Access denied to hidden files.")
+
     headers = dict()
 
     FS = request.app.config['pgs.FS']
@@ -819,6 +888,9 @@ def git_static_file(filename,
 
 
 def pgs(app, config_obj):
+    if not getattr(config_obj, 'root_path', None) and not getattr(config_obj, 'git_repo_path', None):
+        raise ValueError("Configuration error: You must specify either a filesystem path (--path) or a git repository (--git) to serve.")
+
     if config_obj.root_path:
         app.config['pgs.root_path'] = os.path.abspath(
             os.path.expanduser(config_obj.root_path))
@@ -827,6 +899,9 @@ def pgs(app, config_obj):
             os.path.expanduser(config_obj.git_repo_path))
         app.config['pgs.git_repo_rev'] = config_obj.git_repo_rev
         app.config['pgs.git_backend'] = getattr(config_obj, 'git_backend', 'subprocess')
+
+    if hasattr(config_obj, 'block_hidden_files'):
+        app.config['pgs.block_hidden_files'] = config_obj.block_hidden_files
 
     log.info("app.config: %s" % app.config)
     app = configure_app(app)
@@ -887,6 +962,11 @@ Usage examples:
                    default=True,
                    action='store_false',
                    help='set bottle reload=False')
+    prs.add_argument('--block-hidden-files',
+                   dest='block_hidden_files',
+                   default=False,
+                   action='store_true',
+                   help='Do not serve hidden files (defaults to false)')
 
     prs.add_argument('-v', '--verbose',
                    dest='verbose',
