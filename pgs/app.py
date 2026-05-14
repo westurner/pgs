@@ -610,7 +610,14 @@ def configure_app(app, conf=None):
     
     # Register routes to this specific app instance
     app.route('<filepath:re:(.*?)@@$>', callback=explicitly_serve_dirlist)
-    app.route('<filepath:path>', callback=serve_static_files)
+    app.route('<filepath:path>', method=['GET', 'HEAD', 'OPTIONS'], callback=serve_static_files)
+    
+    if app.config.get('pgs.cors'):
+        @app.hook('after_request')
+        def enable_cors():
+            bottle.response.headers['Access-Control-Allow-Origin'] = app.config['pgs.cors']
+            bottle.response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            bottle.response.headers['Access-Control-Allow-Headers'] = 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token'
     
     return app
 
@@ -788,6 +795,9 @@ def serve_dirlist(path):
 
 
 def serve_static_files(filepath, block_hidden_files=None):
+    if request.method == 'OPTIONS':
+        return bottle.HTTPResponse()
+
     if not request.app:
         log.debug("request.app is False")
         return
@@ -935,6 +945,9 @@ def pgs(app, config_obj):
 
     if hasattr(config_obj, 'block_hidden_files'):
         app.config['pgs.block_hidden_files'] = config_obj.block_hidden_files
+        
+    if getattr(config_obj, 'cors', None) is not None:
+        app.config['pgs.cors'] = config_obj.cors
 
     log.info("app.config: %s" % app.config)
     app = configure_app(app)
@@ -1088,6 +1101,11 @@ Usage examples:
                    action='store_true',
                    help='Do not serve hidden files (defaults to false)')
 
+    prs.add_argument('--cors',
+                   dest='cors',
+                   default=None,
+                   help='Enable CORS and set Access-Control-Allow-Origin to the specified value (e.g., "https://example.com" (or "*", which is not secure))')
+    
     prs.add_argument('-v', '--verbose',
                    dest='verbose',
                    action='store_true')
