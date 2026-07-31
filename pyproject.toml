@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pgs"
-version = "0.1.7"
+version = "0.1.8"
 description = "A bottle webapp for serving static files from a git branch, or from the local filesystem."
 authors = [
     { name = "Wes Turner", email = "wes@wrd.nu" }
