@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 """
 pgs.app
 ===============
@@ -27,48 +26,64 @@ Roadmap:
 
 """
 
-import codecs
+from __future__ import print_function
+#import codecs
 import collections
+import io
 import logging
 import mimetypes
 import os.path
 import subprocess
-import time
-
-# import tracemalloc
-# tracemalloc.start()
-
 import sys
+import time
+import urllib.parse
+from typing import Callable
+
 IS_PYTHON2 = sys.version_info.major == 2
 
 if IS_PYTHON2:
     import cgi
     import distutils.spawn
-    html_escape = cgi.escape
-    which = distutils.spawn.find_executable
+
+    which: Callable = distutils.spawn.find_executable
+
+    def html_escape(string, quote=True):
+        string = cgi.escape(string, quote=quote)  # type: ignore
+        if quote:
+            string = string.replace("'", "&#x27;")
+        return string
 
 else:
     import html
     import shutil
-    html_escape = html.escape
-    which = shutil.which
+
+    which: Callable = shutil.which
+    html_escape: Callable = html.escape
 
     basestring = str
     long = int
 
 try:
     import bottle
-    from bottle import parse_date, request, HTTPResponse, HTTPError, route
+    from bottle import HTTPError, HTTPResponse, parse_date, request
 except ImportError:
     # import bottle
     from . import bottle
+
     # from bottle import Bottle, route, run, request, static_file
-    from .bottle import parse_date, request, HTTPResponse, HTTPError, route
+    from .bottle import HTTPError, HTTPResponse, parse_date, request
 
 try:
     import dulwich
+    import dulwich.objects
+    import dulwich.repo
 except ImportError:
     dulwich = None
+
+try:
+    import pygit2
+except ImportError:
+    pygit2 = None
 
 DEBUG = False
 DEFAULT_ENCODING = 'UTF8'
@@ -103,12 +118,13 @@ def pathjoin(*args, **kwargs):
         if len_ < 0:
             raise Exception('no args specified')
         elif len_ == 0:
-            if not isinstance(args, basestring):
-                if hasattr(args, '__iter__'):
-                    _args = args
-                    _args
+            if not isinstance(args[0], basestring):
+                if hasattr(args[0], '__iter__'):
                     args = args[0]
+                    len_ = len(args) - 1
         for i, arg in enumerate(args):
+            if not isinstance(arg, basestring):
+                raise TypeError("pathjoin() argument must be a string, not %s" % type(arg).__name__)
             if not i:
                 yield arg.rstrip('/')
             elif i == len_:
@@ -119,7 +135,42 @@ def pathjoin(*args, **kwargs):
     return sanitize_path(joined_path)
 
 
-class DirectoryRepositoryFS(object):
+
+class RepositoryFS(object):
+    def exists(self, path):
+        # type: (str) -> bool
+        raise NotImplementedError()
+
+    def isdir(self, path):
+        # type: (str) -> bool
+        raise NotImplementedError()
+
+    def isfile(self, path):
+        # type: (str) -> bool
+        raise NotImplementedError()
+
+    def getinfo(self, path):
+        # type: (str) -> dict
+        raise NotImplementedError()
+
+    def listdir(self, path, **kwargs):
+        # type: (str, **dict) -> list
+        raise NotImplementedError()
+
+    def listdirinfo(self, path, **kwargs):
+        # type: (str, **dict) -> iter
+        raise NotImplementedError()
+
+    def get_fileobj(self, path, *args, **kwargs):
+        # type: (str, *tuple, **dict) -> object
+        raise NotImplementedError()
+
+    def getsyspath(self, path, allow_none=False):
+        # type: (str, bool) -> str
+        raise NotImplementedError()
+
+
+class DirectoryRepositoryFS(RepositoryFS):
 
     def __init__(self, conf):
         self.conf = conf
@@ -165,7 +216,7 @@ class DirectoryRepositoryFS(object):
 
     def get_fileobj(self, path, *args, **kwargs):
         kwargs.setdefault('encoding', DEFAULT_ENCODING)
-        return codecs.open(self.prefix_path(path), *args, **kwargs)
+        return io.open(self.prefix_path(path), *args, **kwargs)
 
     def getsyspath(self, path, allow_none=False):
         return self.prefix_path(path)
@@ -174,7 +225,7 @@ class DirectoryRepositoryFS(object):
         return bool(self.getsyspath(path))
 
 
-class SubprocessGitRepositoryFS(object):
+class SubprocessGitRepositoryFS(RepositoryFS):
 
     GIT_BIN = os.environ.get('GIT_BIN', which('git'))
 
@@ -205,12 +256,12 @@ class SubprocessGitRepositoryFS(object):
         retcode = subprocess.call(cmd, stderr=subp_stderr)
         return retcode == 0
 
-    def getsize(self, path):
+    def getsize(self, path: str) -> int:
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-s', self.to_git_pathspec(path)]
-        return long(subprocess.check_output(cmd))
+        return int(subprocess.check_output(cmd))
 
-    def get_author_committer_dates(self, path):
+    def get_author_committer_dates(self, path: str) -> tuple[int, int]:
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['log', '-1', "--format=%at %ct",
                                 self.repo_rev,
@@ -222,6 +273,7 @@ class SubprocessGitRepositoryFS(object):
             return int(author_date), int(committer_date)
         except ValueError:
             print(('output', output))
+            return 0, 0
 
     def getinfo(self, path):
         path = self.prefix_path(path)
@@ -236,7 +288,8 @@ class SubprocessGitRepositoryFS(object):
     def get_object_type(self, path):
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['cat-file', '-t', self.to_git_pathspec(path)]
-        return subprocess.check_output(cmd).strip()
+        output = subprocess.check_output(cmd, universal_newlines=True)
+        return output.strip()
 
     def isdir(self, path):
         return self.get_object_type(path) == 'tree'
@@ -249,7 +302,7 @@ class SubprocessGitRepositoryFS(object):
         if kwargs:
             raise NotImplementedError()  # ~-> PyFilesystem interface
         cmd = self.git_cmd() + ['cat-file', '-p', self.to_git_pathspec(path)]
-        output = subprocess.check_output(cmd)
+        output = subprocess.check_output(cmd, universal_newlines=True)
         files = []
         for _line in output.splitlines():
             line = _line.strip()
@@ -269,16 +322,26 @@ class SubprocessGitRepositoryFS(object):
     def get_fileobj(self, path):
         path = self.prefix_path(path)
         cmd = self.git_cmd() + ['show', self.to_git_pathspec(path)]
-
         #return subprocess.check_output(cmd)
 
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-        #return p.stdout
+        
+        class _StdoutAdapter(object):
+            def __init__(self, process):
+                self.p = process
 
-        #stdout, _ = p.communicate()
-        #return stdout
+            def read(self, *args, **kwargs):
+                return self.p.stdout.read(*args, **kwargs)
 
-        return bottle._closeiter(p.stdout, lambda: p.terminate())
+            def __iter__(self):
+                return iter(self.p.stdout)
+
+            def close(self):
+                self.p.stdout.close()
+                self.p.terminate()
+                self.p.wait()
+
+        return _StdoutAdapter(p)
 
     def get_contents(self, path):
         path = self.prefix_path(path)
@@ -289,29 +352,217 @@ class SubprocessGitRepositoryFS(object):
         return path
 
 
-class DulwichGitRepositoryFS(object):
+class DulwichGitRepositoryFS(RepositoryFS):
 
     def __init__(self, repo_path):
+        # type: (str) -> None
         self.repo_path = repo_path
         self.repo = dulwich.repo.Repo(self.repo_path)
+        self.repo_rev = b'master' # default
+
+    def to_git_path(self, path):
+        # type: (str) -> bytes
+        return path.lstrip('/').encode('utf-8')
+
+    def get_tree(self):
+        commit = self.repo[self.repo_rev]
+        return self.repo[commit.tree]
+
+    def _walk_tree(self, path):
+        # type: (str) -> object
+        tree = self.get_tree()
+        if not path or path == '/':
+            return tree
+        
+        parts = path.strip('/').split('/')
+        current = tree
+        for part in parts:
+            if isinstance(current, dulwich.objects.Tree):
+                b_part = part.encode('utf-8')
+                if b_part in current:
+                    mode, sha = current[b_part]
+                    current = self.repo[sha]
+                else:
+                    return None
+            else:
+                return None
+        return current
 
     def exists(self, path):
-        "TODO"
+        # type: (str) -> bool
+        return self._walk_tree(path) is not None
 
     def isdir(self, path):
-        "TODO"
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, dulwich.objects.Tree)
 
     def isfile(self, path):
-        "TODO"
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, dulwich.objects.Blob)
+
+    def getinfo(self, path):
+        # type: (str) -> dict
+        obj = self._walk_tree(path)
+        import collections
+        import time
+        attrs = collections.OrderedDict()
+        
+        if obj:
+            attrs["size"] = obj.raw_length() if isinstance(obj, dulwich.objects.Blob) else 0
+        else:
+            attrs['size'] = 0
+
+        try: 
+            commit = self.repo[self.repo_rev]
+        except KeyError:
+            raise
+            #raise Exception(('Commit not found:', (self.repo_rev,)))
+        committer_date = commit.commit_time
+        
+        attrs["created_time"] = committer_date
+        attrs["accessed_time"] = committer_date
+        attrs["modified_time"] = committer_date
+        return attrs
+
+    def listdir(self, path, **kwargs):
+        # type: (str, **dict) -> list
+        obj = self._walk_tree(path)
+        if isinstance(obj, dulwich.objects.Tree):
+            return [item.path.decode('utf-8') for item in obj.items()]
+        return []
+
+    def listdirinfo(self, path, **kwargs):
+        # type: (str, **dict) -> iter
+        from pgs.app import pathjoin
+        for p in self.listdir(path, **kwargs):
+            yield self.getinfo(pathjoin(path, p))
+
+    def get_fileobj(self, path, *args, **kwargs):
+        # type: (str, *tuple, **dict) -> object
+        import io
+        obj = self._walk_tree(path)
+        if isinstance(obj, dulwich.objects.Blob):
+            return io.BytesIO(obj.data)
+        return io.BytesIO(b'')
+
+    def getsyspath(self, path, allow_none=False):
+        # type: (str, bool) -> str
+        return path
+
+
+class Libgit2GitRepositoryFS(RepositoryFS):
+
+    def __init__(self, repo_path):
+        # type: (str) -> None
+        self.repo_path = repo_path
+        self.repo = pygit2.Repository(self.repo_path)
+        self.repo_rev = 'master' # default
+
+    def get_tree(self):
+        commit = self.repo.revparse_single(self.repo_rev)
+        return commit.tree
+
+    def _walk_tree(self, path):
+        # type: (str) -> object
+        tree = self.get_tree()
+        if not path or path == '/':
+            return tree
+        
+        parts = path.strip('/').split('/')
+        current = tree
+        for part in parts:
+            if isinstance(current, pygit2.Tree):
+                try:
+                    entry = current[part]
+                    current = self.repo[entry.id]
+                except KeyError:
+                    return None
+            else:
+                return None
+        return current
+
+    def exists(self, path):
+        # type: (str) -> bool
+        return self._walk_tree(path) is not None
+
+    def isdir(self, path):
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, pygit2.Tree)
+
+    def isfile(self, path):
+        # type: (str) -> bool
+        obj = self._walk_tree(path)
+        return isinstance(obj, pygit2.Blob)
+
+    def getinfo(self, path):
+        # type: (str) -> dict
+        obj = self._walk_tree(path)
+        attrs = collections.OrderedDict()
+        
+        if obj:
+            attrs["size"] = obj.size if isinstance(obj, pygit2.Blob) else 0
+        else:
+            attrs['size'] = 0
+
+        commit = self.repo.revparse_single(self.repo_rev)
+        committer_date = commit.commit_time
+        
+        attrs["created_time"] = committer_date
+        attrs["accessed_time"] = committer_date
+        attrs["modified_time"] = committer_date
+        return attrs
+
+    def listdir(self, path, **kwargs):
+        # type: (str, **dict) -> list
+        obj = self._walk_tree(path)
+        if isinstance(obj, pygit2.Tree):
+            return [entry.name for entry in obj]
+        return []
+
+    def listdirinfo(self, path, **kwargs):
+        # type: (str, **dict) -> iter
+        for p in self.listdir(path, **kwargs):
+            yield self.getinfo(pathjoin(path, p))
+
+    def get_fileobj(self, path, *args, **kwargs):
+        # type: (str, *tuple, **dict) -> object
+        obj = self._walk_tree(path)
+        if isinstance(obj, pygit2.Blob):
+            return io.BytesIO(obj.data)
+        return io.BytesIO(b'')
+
+    def getsyspath(self, path, allow_none=False):
+        # type: (str, bool) -> str
+        return path
 
 
 ADDL_MIMETYPES = [
-    ('text/x-makefile', 'Makefile'),
+    ('text/html', '.html'),
+
+    ## Specify text/ MIME types for these file extensions to make files viewable
+    ('text/plain', '.txt'),
     ('text/x-rst', '.rst'),
+    ('text/markdown', '.md'),
+    ('text/x-makefile', '.make'),
+    ('text/x-makefile', '.mk'),
+    ('text/plain', '.cfg'),
+
     # ('application/json', '.json'),
+    # ('application/ld+json', '.jsonld'),
     ('text/json', '.json'),
     ('text/json', '.jsonld'),
+
+    #('application/yaml', '.yml'),
+    #('application/yaml', '.yaml'),
+    ('text/yaml', '.yml'),
+    ('text/yaml', '.yaml'),
+
     ('text/csv', '.csv'),
+
+    # Linked Data MIME types (per 5stardata.info)
     ('text/turtle', '.ttl'),
     ('application/n-triples', '.nt'),
     ('application/rdf+xml', '.rdf'),
@@ -359,7 +610,14 @@ def configure_app(app, conf=None):
     
     # Register routes to this specific app instance
     app.route('<filepath:re:(.*?)@@$>', callback=explicitly_serve_dirlist)
-    app.route('<filepath:path>', callback=serve_static_files)
+    app.route('<filepath:path>', method=['GET', 'HEAD', 'OPTIONS'], callback=serve_static_files)
+    
+    if app.config.get('pgs.cors'):
+        @app.hook('after_request')
+        def enable_cors():
+            bottle.response.headers['Access-Control-Allow-Origin'] = app.config['pgs.cors']
+            bottle.response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            bottle.response.headers['Access-Control-Allow-Headers'] = 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token'
     
     return app
 
@@ -370,7 +628,15 @@ def configure_FS(app, conf=None):
     FS = None
     # if git configuration is found, use git
     if conf.get('pgs.git_repo_path'):
-        FS = SubprocessGitRepositoryFS(app.config)
+        backend = conf.get('pgs.git_backend', 'subprocess')
+        if backend == 'dulwich' and dulwich is not None:
+            FS = DulwichGitRepositoryFS(conf.get('pgs.git_repo_path'))
+            FS.repo_rev = conf.get('pgs.git_repo_rev', b'master').encode('utf-8') if isinstance(conf.get('pgs.git_repo_rev', 'master'), str) else conf.get('pgs.git_repo_rev', b'master')
+        elif backend == 'pygit2' and pygit2 is not None:
+            FS = Libgit2GitRepositoryFS(conf.get('pgs.git_repo_path'))
+            FS.repo_rev = conf.get('pgs.git_repo_rev', 'master')
+        else:
+            FS = SubprocessGitRepositoryFS(app.config)
     # otherwise, serve from the filesystem at pgs.root_path
     elif conf.get('pgs.root_path'):
         FS = DirectoryRepositoryFS(app.config)
@@ -393,12 +659,61 @@ def make_app(conf=None):
 #        if value:
 #            app.config['pgs.FS'] = SubprocessGitRepositoryFS(app.config)
 
-
 def sanitize_path(path):
-    # XXX TODO FIXME
-    if '/../' in path:
-        raise Exception()
-    return path
+    if '\0' in path:
+        raise ValueError("Path traversal detected")
+        
+    # Decode URL-encoded paths, protecting against double/multiple encoding
+    decoded_path = urllib.parse.unquote(path)
+    prev = path
+    while decoded_path != prev:
+        prev = decoded_path
+        decoded_path = urllib.parse.unquote(decoded_path)
+    
+    # Normalize backslashes to forward slashes (e.g. Windows paths)
+    normalized = decoded_path.replace('\\', '/')
+    
+    has_leading_slash = normalized.startswith('/')
+    has_trailing_slash = normalized.endswith('/') and len(normalized) > 1
+    
+    # Strip leading slashes so normpath doesn't treat it as absolute
+    stripped = normalized.lstrip('/')
+    
+    # Empty string from stripping
+    if not stripped:
+        if not path and not decoded_path:
+            return ''
+        return '/' if has_leading_slash else '.'
+
+    norm = os.path.normpath(stripped)
+    
+    # Check if the normalized path attempts to navigate out of the root
+    if norm.startswith('../') or norm == '..':
+        raise ValueError("Path traversal detected")
+        
+    # Return the normalized, forward-slashed version to prevent symlink bypasses
+    # by ensuring backend filesystems resolve lexically evaluated safe paths
+    res = norm.replace('\\', '/')
+    
+    if has_leading_slash and res != '.':
+        res = '/' + res
+    if has_trailing_slash and not res.endswith('/'):
+        res += '/'
+        
+    return res
+
+
+def is_hidden_path(path):
+    """
+    Checks if a path contains any hidden files or directories 
+    (starting with '.' but not exactly '.' or '..').
+    """
+    parts = path.strip('/\\').split('/')
+    for part in parts:
+        clean_part = part.strip()
+        if clean_part.startswith('.') and clean_part not in ['.', '..', '']:
+            return True
+    return False
 
 
 def rewrite_path(FS, _path):
@@ -411,6 +726,10 @@ def rewrite_path(FS, _path):
     """
     path = sanitize_path(_path)
     log.debug('sntpath: %r' % path)
+    
+    if FS is None:
+        raise ValueError("Backend filesystem (FS) is not configured.")
+
     if FS.exists(path):
         if FS.isdir(path):
             dir_index_html_path = pathjoin(path, 'index.html')
@@ -441,16 +760,24 @@ def generate_dirlist_html(FS, filepath):
     Yields:
         str: lines of an HTML table
     """
-    yield '<table class="dirlist">'
+    yield '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n'
+    yield '<title>%s Directory listing</title>\n' % html_escape(filepath)
+    yield '<style>\n'
+    yield '  :root { color-scheme: light dark; }\n'
+    yield '  body { font-family: monospace; padding: 1rem; }\n'
+    yield '  table.dirlist td { padding: 0.25rem 1rem 0.25rem 0; }\n'
+    yield '</style>\n</head>\n<body>\n'
+    yield '<h1>%s Directory listing</h1>\n' % html_escape(filepath)
+    yield '<table class="dirlist">\n'
     if filepath == '/':
         filepath = ''
-    for name in FS.listdir(filepath):
+    for name in sorted(FS.listdir(filepath)):
         full_path = pathjoin(filepath, name)
         if FS.isdir(full_path):
             full_path = full_path + '/'
-        yield u'<tr><td><a href="{0}">{0}</a></td></tr>'.format(
+        yield u'<tr><td><a href="{0}">{0}</a></td></tr>\n'.format(
             html_escape(full_path))  # TODO XXX
-    yield '</table>'
+    yield '</table>\n</body>\n</html>'
 
 
 def explicitly_serve_dirlist(filepath):
@@ -467,16 +794,28 @@ def serve_dirlist(path):
     return HTTPError(404, 'Not found.')
 
 
-def serve_static_files(filepath):
+def serve_static_files(filepath, block_hidden_files=None):
+    if request.method == 'OPTIONS':
+        return bottle.HTTPResponse()
+
     if not request.app:
         log.debug("request.app is False")
         return
+
     FS = request.app.config['pgs.FS']
+    if block_hidden_files is None:
+        block_hidden_files = request.app.config.get('pgs.block_hidden_files', False)
+
     if filepath == '':
         filepath = '/'  # index.html'
     log.debug("filepath: %r" % filepath)
     path = rewrite_path(FS, filepath)  # or ''  # XXX
     log.debug("rwpath  : %r" % path)
+    
+    # Hidden files check MUST operate on the fully normalized and parsed path
+    if block_hidden_files and is_hidden_path(path):
+        return HTTPError(403, "Access denied to hidden files.")
+
     if FS.exists(path) and FS.isdir(path):
         index_html = pathjoin(path, 'index.html')
         if FS.exists(index_html) and FS.isfile(index_html):
@@ -487,11 +826,12 @@ def serve_static_files(filepath):
                 # TODO: mtime ?
 
     if isinstance(FS, DirectoryRepositoryFS):
-        return bottle.static_file(path, root=request.app.config['pgs.root_path'])
-    elif isinstance(FS, SubprocessGitRepositoryFS):
+        mimetype, _ = mimetypes.guess_type(path)
+        return bottle.static_file(path, root=request.app.config['pgs.root_path'], mimetype=(mimetype or 'text/plain'))
+    elif isinstance(FS, (SubprocessGitRepositoryFS, DulwichGitRepositoryFS, Libgit2GitRepositoryFS)):
         # this is mostly derived from bottle.static_file
         # without the RANGE support
-        return git_static_file(path)
+        return git_static_file(path, block_hidden_files=block_hidden_files)
     else:
         raise Exception(FS, type(FS))
 
@@ -499,7 +839,8 @@ def serve_static_files(filepath):
 def git_static_file(filename,
                     mimetype='auto',
                     download=False,
-                    charset='UTF-8'):
+                    charset='UTF-8',
+                    block_hidden_files=False):
     """ This method is derived from bottle.static_file:
 
         Open [a file] and return :exc:`HTTPResponse` with status
@@ -521,6 +862,10 @@ def git_static_file(filename,
     # root = os.path.abspath(root) + os.sep
     # filename = os.path.abspath(pathjoin(root, filename.strip('/\\')))
     filename = filename.strip('/\\')
+    
+    if block_hidden_files and is_hidden_path(filename):
+        return HTTPError(403, "Access denied to hidden files.")
+
     headers = dict()
 
     FS = request.app.config['pgs.FS']
@@ -536,6 +881,11 @@ def git_static_file(filename,
             mimetype, encoding = mimetypes.guess_type(download)
         else:
             mimetype, encoding = mimetypes.guess_type(filename)
+            
+        # default to mimetype text/plain (after mimetypes.guess_type)
+        if not mimetype:
+            mimetype = 'text/plain'
+            
         if encoding:
             headers['Content-Encoding'] = encoding
 
@@ -565,8 +915,7 @@ def git_static_file(filename,
         return HTTPResponse(status=304, **headers)
 
     body = '' if request.method == 'HEAD' else FS.get_fileobj(filename)
-
-    clen
+    # clen
     # headers["Accept-Ranges"] = "bytes"
     # ranges = request.environ.get('HTTP_RANGE')
     # if 'HTTP_RANGE' in request.environ:
@@ -582,6 +931,9 @@ def git_static_file(filename,
 
 
 def pgs(app, config_obj):
+    if not getattr(config_obj, 'root_path', None) and not getattr(config_obj, 'git_repo_path', None):
+        raise ValueError("Configuration error: You must specify either a filesystem path (--path) or a git repository (--git) to serve.")
+
     if config_obj.root_path:
         app.config['pgs.root_path'] = os.path.abspath(
             os.path.expanduser(config_obj.root_path))
@@ -589,70 +941,208 @@ def pgs(app, config_obj):
         app.config['pgs.git_repo_path'] = os.path.abspath(
             os.path.expanduser(config_obj.git_repo_path))
         app.config['pgs.git_repo_rev'] = config_obj.git_repo_rev
+        app.config['pgs.git_backend'] = getattr(config_obj, 'git_backend', 'subprocess')
+
+    if hasattr(config_obj, 'block_hidden_files'):
+        app.config['pgs.block_hidden_files'] = config_obj.block_hidden_files
+        
+    if getattr(config_obj, 'cors', None) is not None:
+        app.config['pgs.cors'] = config_obj.cors
 
     log.info("app.config: %s" % app.config)
     app = configure_app(app)
+    
+    server_kwargs = {}
+    if getattr(config_obj, 'https', True):
+        class SSLWSGIRefServer(bottle.ServerAdapter):
+            def run(self, handler):
+                from wsgiref.simple_server import make_server
+                import ssl
+                import subprocess
+                
+                cert_file = getattr(config_obj, 'cert_file', 'server.pem')
+                key_file = getattr(config_obj, 'key_file', 'server.key')
+                
+                if getattr(config_obj, 'generate_cert', False) and (not os.path.exists(cert_file) or not os.path.exists(key_file)):
+                    if which('openssl'):
+                        # Using -addext for SANs (works in OpenSSL 1.1.1+)
+                        cmd = [
+                            'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-days', '365', 
+                            '-nodes', '-keyout', key_file, '-out', cert_file,
+                            '-subj', '/CN=%s' % self.host,
+                            '-addext', 'subjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' % self.host
+                        ]
+                        subprocess.check_call(cmd)
+                    else:
+                        raise RuntimeError("openssl not found on PATH, cannot generate certificate")
+
+                srv = make_server(self.host, self.port, handler)
+                context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                
+                context.minimum_version = ssl.TLSVersion.TLSv1_3
+                context.maximum_version = ssl.TLSVersion.TLSv1_3
+                
+                cipher_mode = getattr(config_obj, 'https_ciphers', 'hybrid')
+                if cipher_mode == 'hybrid':
+                    try:
+                        context.set_groups("X25519MLKEM768:prime256v1:secp384r1")
+                    except AttributeError:
+                        try:
+                            context.set_ecdh_curve("X25519")
+                        except Exception:
+                            pass
+                elif cipher_mode == 'pq':
+                    try:
+                        context.set_groups("X25519MLKEM768")
+                    except AttributeError:
+                        pass
+                elif cipher_mode == 'nopq':
+                    try:
+                        context.set_groups("X25519")
+                    except AttributeError:
+                        try:
+                            context.set_ecdh_curve("X25519")
+                        except Exception:
+                            pass
+                elif cipher_mode == 'null':
+                    warningstr = "Warning: A 'null' cipher setting is being used!"
+                    logging.warning(warningstr)
+                    print(warningstr)
+                    context.set_ciphers('eNULL:aNULL:NULL')
+                
+                context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+                srv.socket = context.wrap_socket(srv.socket, server_side=True)
+                srv.serve_forever()
+        server_kwargs['server'] = SSLWSGIRefServer
+
     return bottle.run(app,
                       host=config_obj.host,
                       port=config_obj.port,
                       debug=config_obj.debug,
-                      reloader=config_obj.reloader)
+                      reloader=config_obj.reloader,
+                      **server_kwargs)
 
 
-def main(argv=1j):
-    import logging
-    import optparse
-    import sys
+def get_parser():
+    import argparse
+    import textwrap
 
-    prs = optparse.OptionParser(
-        usage="%prog [-p <path>] [-g <repopath>] [-r <rev/tag/branch>]",
+    epilog = """
+Usage examples:
+  pgs -p ./my/directory
+  pgs -g ./my/git/repo -r main
+  pgs -g . -r HEAD --git-backend dulwich -P 8080
+
+"""
+    prs = argparse.ArgumentParser(
+        prog='pgs',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Serve a directory or a git revision over HTTP "
-                    "with Bottle, WSGI, MIME types, and Last-Modified headers")
+                    "with Bottle, WSGI, MIME types, and Last-Modified headers",
+        epilog=textwrap.dedent(epilog))
 
-    prs.add_option('-p', '--path', '--prefix',
+    prs.add_argument('-p', '--path', '--prefix',
                    dest='root_path',
                    help='Filesystem path to serve files from')
 
-    prs.add_option('-g', '--git',
+    prs.add_argument('-g', '--git',
                    dest='git_repo_path',
                    help='Path to git repo to serve files from')
-    prs.add_option('-r', '--rev',
+    prs.add_argument('-r', '--rev',
                    dest='git_repo_rev',
                    help='Git repo revision (commit hash, branch, tag)',
                    default='gh-pages')
+    prs.add_argument('--git-backend',
+                   dest='git_backend',
+                   help='Git backend to use (subprocess, dulwich, pygit2)',
+                   default='subprocess')
 
-    prs.add_option('-H', '--host',
+    prs.add_argument('-H', '--host',
                    dest='host',
                    default='localhost')
-    prs.add_option('-P', '--port',
+    prs.add_argument('-P', '--port',
                    dest='port',
-                   default='8082')
-    prs.add_option('--debug',
+                   default='8082', type=int)
+    prs.add_argument('--debug',
                    dest='debug',
                    default=True,
                    action='store_false',
                    help='set bottle debug=False')
-    prs.add_option('--reload',
+    prs.add_argument('--reload',
                    dest='reloader',
                    default=True,
                    action='store_false',
                    help='set bottle reload=False')
+    prs.add_argument('--generate-cert',
+                   dest='generate_cert',
+                   action='store_true',
+                   default=False,
+                   help='Automatically generate a self-signed certificate with OpenSSL if not present')
+    prs.add_argument('--https-ciphers',
+                   dest='https_ciphers',
+                   choices=['nopq', 'hybrid', 'pq', 'null'],
+                   default='hybrid',
+                   help='Cipher selection mode: nopq, hybrid, pq, or null')
+    prs.add_argument('--cert-file',
+                   dest='cert_file',
+                   default='server.pem',
+                   help='Path to the SSL certificate file')
+    prs.add_argument('--key-file',
+                   dest='key_file',
+                   default='server.key',
+                   help='Path to the SSL key file')
+    prs.add_argument('--https',
+                   dest='https',
+                   action='store_true',
+                   default=True,
+                   help='Enable HTTPS support (default: True)')
+    prs.add_argument('--no-https',
+                   dest='https',
+                   action='store_false',
+                   help='Disable HTTPS support')
+    prs.add_argument('--block-hidden-files',
+                   dest='block_hidden_files',
+                   default=False,
+                   action='store_true',
+                   help='Do not serve hidden files (defaults to false)')
 
-    prs.add_option('-v', '--verbose',
+    prs.add_argument('--cors',
+                   dest='cors',
+                   default=None,
+                   help='Enable CORS and set Access-Control-Allow-Origin to the specified value (e.g., "https://example.com" (or "*", which is not secure))')
+    
+    prs.add_argument('-v', '--verbose',
                    dest='verbose',
-                   action='store_true',)
-    prs.add_option('-q', '--quiet',
+                   action='store_true')
+    prs.add_argument('-q', '--quiet',
                    dest='quiet',
-                   action='store_true',)
-    prs.add_option('-t', '--test',
+                   action='store_true')
+    prs.add_argument('-t', '--test',
                    dest='run_tests',
-                   action='store_true',)
+                   action='store_true')
+
+    return prs
+
+def main(argv=1j) -> int:
+    import logging
+    import sys
+
+    prs = get_parser()
+    
+    try:
+        import argcomplete
+        argcomplete.autocomplete(prs)
+    except ImportError:
+        pass
+
     _argv = []
     if argv == 1j:
         _argv = sys.argv[1:]
     elif argv is None:
         _argv = []
-    (opts, args) = prs.parse_args(args=_argv)  # _argv)
+    else:
+        _argv = argv
+    opts, args = prs.parse_known_args(args=_argv)
 
     loglevel = logging.INFO
     if opts.quiet:
@@ -675,12 +1165,12 @@ def main(argv=1j):
     if opts.run_tests:
         __argv = [sys.argv[0]] + args
         import unittest
-        return unittest.main(argv=__argv)
+        unittest.main(argv=__argv)
+        return 0
 
     # bottle app
     app = make_app(conf=None)
-    output = pgs(app, opts)
-    output
+    _output = pgs(app, opts)
     return 0
 
 

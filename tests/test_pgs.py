@@ -8,10 +8,11 @@ test_pgs
 Tests for `pgs` module.
 """
 
-import unittest
 
 import collections
 import os.path
+import sys
+import unittest
 
 import pgs.app
 from pgs.app import pathjoin
@@ -66,6 +67,23 @@ class TestPathJoin(unittest.TestCase):
         output = pathjoin('/a/b', 'index.html')
         self.assertEqual(output, '/a/b/index.html')
 
+    def test_pathjoin_exceptions(self):
+        with self.assertRaises(Exception):
+            pathjoin()
+
+    def test_pathjoin_iterable(self):
+        output = pathjoin(['/a/', '/b/', 'c'])
+        self.assertEqual(output, '/a/b/c')
+
+        output = pathjoin(('/a/', '/b/', 'c'))
+        self.assertEqual(output, '/a/b/c')
+
+    def test_pathjoin_none_string(self):
+        with self.assertRaises(TypeError):
+            pathjoin('/a', None, 'c')
+        
+        with self.assertRaises(TypeError):
+            pathjoin(None, '/a', 'c')
 
 class FSTestUtils(object):
 
@@ -236,7 +254,7 @@ class TestWebPgs_SubprocessGitRepositoryFS(unittest.TestCase):
     conf = confs['git0']
 
     def setUp(self):
-        app = pgs.app.configure_app(pgs.app.app, self.conf)
+        app = pgs.app.make_app(self.conf)
         self.app = webtest.TestApp(app)
 
     def test_root(self):
@@ -255,11 +273,79 @@ class TestWebPgs_SubprocessGitRepositoryFS(unittest.TestCase):
             rsp = self.app.get(url)
             rsp.mustcontain(u'class="dirlist"')
 
+    def test_security_web_access(self):
+        # By default, block_hidden_files is False unless enabled
+        self.app.app.config['pgs.block_hidden_files'] = True
+        
+        # Test hidden files block
+        hidden_urls = [
+            '/.env',
+            '/a/b/.hidden',
+            '/ .git',
+            '/.git/config'
+        ]
+        for url in hidden_urls:
+            rsp = self.app.get(url, expect_errors=True)
+            self.assertEqual(rsp.status_code, 403, "URL %r should be 403 Forbidden" % url)
+
+        # Ensure that valid structural tokens and files are not inappropriately blocked
+        valid_urls = [
+            '/index.html',
+            '/a/b/c'
+        ]
+        for url in valid_urls:
+            rsp = self.app.get(url, expect_errors=True)
+            # They should exist or return 404, not 403
+            self.assertNotEqual(rsp.status_code, 403, "URL %r should NOT be 403" % url)
+
+        # Test double/URL-encoded path traversal protection
+        traversal_urls = [
+            #'../../../../etc/passwd',  # TODO: fix `AssertionError: PATH_INFO doesn't start with /: '../../../../etc/passwd'`
+            '/../../../../etc/passwd',
+            #'%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd',
+            '/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd',
+            #'%252e%252e/%252e%252e/%252e%252e/%252e%252e/etc/passwd',
+            '/%252e%252e/%252e%252e/%252e%252e/%252e%252e/etc/passwd',
+            '/a/b/c/\0_hidden_test.txt'
+        ]
+        for url in traversal_urls:
+            # We expect a 500 error triggered by the ValueError
+            rsp = self.app.get(url, expect_errors=True)
+            self.assertEqual(rsp.status_code, 500, "URL %r should trigger a 500 internal server error due to ValueError" % url)
+
 
 class TestWebPgs_DirectoryRepositoryFS(TestWebPgs_SubprocessGitRepositoryFS):
 
     conf = confs['fs0']
 
 
+class TestHTMLEscape(unittest.TestCase):
+    def test_html_escape_owasp_param(self):
+        # CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')
+        # OWASP recommends escaping: & < > " '
+        from pgs.app import html_escape
+        
+        test_cases = [
+            # (TestCase description, payload, expected_output)
+            ('Basic ampersand', 'a & b', 'a &amp; b'),
+            ('Less than', 'a < b', 'a &lt; b'),
+            ('Greater than', 'a > b', 'a &gt; b'),
+            ('Double quotes', '"double"', '&quot;double&quot;'),
+            ('Single quotes', "'single'", '&#x27;single&#x27;'),
+            ('Basic script tag', '<script>alert(1)</script>', '&lt;script&gt;alert(1)&lt;/script&gt;'),
+            ('Attribute injection double quotes', '"><script>alert(1)</script><a href="', '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;a href=&quot;'),
+            ('Attribute injection single quotes', "' onmouseover='alert(1)", "&#x27; onmouseover=&#x27;alert(1)"),
+            ('Multiple tags', '&lt;&gt;', '&amp;lt;&amp;gt;'),  # Escaping an already XML-escaped string
+            ('JavaScript link (text layer)', 'javascript://%250Aalert(1)', 'javascript://%250Aalert(1)'), # Doesn't contain escapable chars
+            ('Complex XSS Vector', '<IMG SRC=javascript:alert(String.fromCharCode(88,83,83))>', '&lt;IMG SRC=javascript:alert(String.fromCharCode(88,83,83))&gt;'),
+            ('Image tag with onerror attribute', '<img src=x onerror=alert(1)>', '&lt;img src=x onerror=alert(1)&gt;'),
+        ]
+        
+        for desc, payload, expected in test_cases:
+            with self.subTest(msg=desc, payload=payload):
+                self.assertEqual(html_escape(payload), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
+

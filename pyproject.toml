@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgs"
+version = "0.1.8"
+description = "A bottle webapp for serving static files from a git branch, or from the local filesystem."
+authors = [
+    { name = "Wes Turner", email = "wes@wrd.nu" }
+]
+license = "MIT"
+readme = "README.rst"
+requires-python = ">=2.6"
+keywords = ["pgs"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 2",
+    "Programming Language :: Python :: 2.6",
+    "Programming Language :: Python :: 2.7",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.3",
+    "Programming Language :: Python :: 3.4",
+]
+dependencies = [
+    "bottle"
+]
+
+[project.urls]
+Homepage = "https://github.com/westurner/pgs"
+
+[project.scripts]
+pgs = "pgs.app:main"
+
+[project.optional-dependencies]
+test = [
+    "webtest",
+    "requests",
+    "tox",
+    "pygit2",
+    "dulwich"
+]
+libgit2 = ["pygit2"]
+dulwich = ["dulwich"]
+
+[tool.setuptools.packages.find]
+exclude = ["reports", "reports.*"]

@@ -1,0 +1,25 @@
+{
+    "name": "pgs Dev Container",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/bin/python3",
+                "python.formatting.provider": "black"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "ms-vscode-remote.remote-containers",
+                "ms-python.isort"
+            ]
+        }
+    },
+    "remoteUser": "vscode",
+    //"postCreateCommand": "pip3 install --user -r requirements.txt -r requirements.test.txt"
+    "postCreateCommand": "pip3 install --user -e .[test,dulwich,pygit2]"
+}
